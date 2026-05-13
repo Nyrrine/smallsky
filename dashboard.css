@@ -1210,6 +1210,8 @@ ol, ul { list-style: none; }
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: background 100ms ease, border-color 100ms ease;
 }
 .settings-action:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
