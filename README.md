@@ -8,13 +8,19 @@
 
 <br>
 
+<sub>· · ✦ · · · ✧ · · ✦ · ·</sub>
+
 <a href="https://github.com/Nyrrine">
-  <img src="https://github.com/Nyrrine.png?size=160" width="64" alt="@Nyrrine on GitHub">
+  <img src="https://github.com/Nyrrine.png?size=260" width="116" alt="@Nyrrine on GitHub">
 </a>
 
-<sub>by <a href="https://github.com/Nyrrine"><b>@Nyrrine</b></a> · BS Information Systems · DLS-CSB</sub>
+<sub>✦   by <a href="https://github.com/Nyrrine"><b>@Nyrrine</b></a>   ✦</sub>
 
-<br><br>
+<sub><i>BS Information Systems · ID 125 · DLS-CSB</i></sub>
+
+<sub>· · ✧ · · · ✦ · · ✧ · ·</sub>
+
+<br>
 
 [![Discord](https://img.shields.io/badge/Discord-Join_support-5865F2?logo=discord&logoColor=white)](https://discord.gg/DTvRR5qxxh)
 [![GitHub](https://img.shields.io/badge/GitHub-@Nyrrine-181717?logo=github&logoColor=white)](https://github.com/Nyrrine)
@@ -77,9 +83,18 @@ Found a bug, want a feature, or just to say hi? [Join the Discord](https://disco
 
 ## Updates
 
-SmallSky checks for new versions once a day. When one's out, you'll see a soft banner at the top of the dashboard with a "See what's new" button — click it for the changelog and a 1-minute update guide.
+SmallSky keeps itself in step with what's published on GitHub without ever pestering you.
 
-If you dismiss a version, you won't be nagged about it again. The next version will pop up its own banner.
+**How the auto-update notifier works:**
+
+- A small `version.json` lives in this repo. The extension's service worker fetches it **once a day** and compares against the version baked into your installed `manifest.json`.
+- If a newer version is published, a **small pill-shaped banner** appears at the top of the dashboard — outlined, not loud, easy to ignore. One sentence + a "See what's new" button + a × to dismiss.
+- Clicking **See what's new** opens a centered modal with the changelog (pulled from `version.json`), a 3-step update guide (download → replace folder → reload), and a link to the Discord install thread for picture-guided help.
+- Clicking **×** dismisses *that* version permanently. The next release pops its own banner.
+- You can also **check manually** anytime: open Settings (the ⚙️ in the top bar) → Data → **Check now**. Shows a toast either way ("you're on the latest" or "v1.x.y is out").
+- If you're offline, the check fails silently — no banner, no error, the rest of the dashboard works normally.
+
+**For maintainers:** see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the release process. tl;dr: `python3 tools/bump-version.py 1.x.y "change" "change"` + a git tag push fires the GitHub Actions release workflow.
 
 ## Privacy
 

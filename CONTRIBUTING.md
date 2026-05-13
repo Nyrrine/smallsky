@@ -90,6 +90,45 @@ PRs are reviewed for:
 - Reasonable performance — feature should still feel instant at first paint
 - No new dependencies unless very justified
 
+## CI checks (run automatically on every push + PR)
+
+Three workflows live in `.github/workflows/`:
+
+- **`lint.yml`** — JSON validity, JS syntax (`node --check`), and a check that every file referenced by `manifest.json` actually exists on disk. Fast and minimal — no eslint or prettier overhead.
+- **`manifest-sync.yml`** — verifies `manifest.json#version` and `version.json#version` are identical. If they drift, the in-extension update notifier would mislead users.
+- **`release.yml`** — triggers only on `v*` tag pushes. Builds a clean distribution zip (excludes `.git`, `.github`, `recon`), creates a GitHub Release with auto-generated changelog, attaches the zip as a release asset.
+
+Regular pushes only run the first two (read-only validators). The release workflow never fires unless you explicitly push a version tag.
+
+## Release process
+
+For when you're ready to ship a new version:
+
+```bash
+# 1. Bump both manifest.json and version.json in one shot
+python3 tools/bump-version.py 1.1.0 "Added ⌘K palette" "Fixed dark mode toast"
+
+# 2. Commit + push the version bump
+git add manifest.json version.json
+git commit -m "Release v1.1.0"
+git push
+
+# 3. Tag and push the tag — this fires the release workflow
+git tag v1.1.0 -m "SmallSky v1.1.0"
+git push origin v1.1.0
+```
+
+The `release.yml` action picks it up from there:
+- Checks out the tagged commit
+- Builds `smallsky-v1.1.0.zip` (with the right exclusions)
+- Verifies nothing sensitive made it into the archive
+- Creates a GitHub Release with the tag
+- Attaches the zip as an asset
+
+Within 24 hours, every installed SmallSky's daily update check sees the new `version.json`, flags `available: true`, and shows the soft banner on the dashboard. Users click "See what's new" → modal with the changelog you passed to `bump-version.py` → 3-step update guide.
+
+If you want to push an update to users *faster than 24 hours*, just tell them in Discord — they can hit **Settings → Data → Check now** to pull the new banner immediately.
+
 ## What this project is *not* trying to be
 
 - A replacement for BigSky itself. We don't reimplement quiz-taking, file uploads, gradebook editing. We're a reader, an organizer, a calm landing page.
