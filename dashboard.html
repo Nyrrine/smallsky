@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SmallSky</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
+  <link rel="icon" type="image/png" sizes="128x128" href="assets/icon-128.png">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="topbar-search-wrap">
+        <div class="topbar-search">
+          <span class="topbar-search-icon" id="search-icon-slot"></span>
+          <input id="search-input" type="text"
+                 placeholder="Search announcements, modules, assignments…"
+                 autocomplete="off" spellcheck="false" />
+          <kbd class="search-shortcut">/</kbd>
+        </div>
+        <div id="search-results" class="search-results-panel" role="listbox"></div>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" data-action="theme" aria-label="Toggle theme"></button>
+        <button class="icon-btn icon-btn--badged" data-action="bell" aria-label="Notifications">
+          <span class="icon-btn-badge" id="bell-badge" hidden></span>
+        </button>
+        <button class="icon-btn" data-action="settings" aria-label="Settings"></button>
+        <button class="avatar" data-action="profile" aria-label="Profile">·</button>
+      </div>
+    </header>
+
+    <section class="greeting">
+      <div class="greeting-text">
+        <h1 id="greeting-headline">Welcome.</h1>
+        <p id="greeting-sub" class="muted">Catching up with BigSky…</p>
+      </div>
+      <img class="brand-logo" src="assets/smallsky-mark.svg" alt="SmallSky">
+    </section>
+
+    <section class="up-next" aria-labelledby="up-next-label">
+      <h2 id="up-next-label" class="section-label">Up next</h2>
+      <div class="up-next-grid" id="up-next-grid"></div>
+    </section>
+
+    <div class="main-grid">
+      <section class="classes" aria-labelledby="classes-label">
+        <h2 id="classes-label" class="section-label">My classes</h2>
+        <div class="course-grid" id="course-grid"></div>
+      </section>
+
+      <aside class="whats-new" aria-labelledby="whats-new-label">
+        <h2 id="whats-new-label" class="section-label">What's new</h2>
+        <ol class="feed" id="feed"></ol>
+      </aside>
+    </div>
+
+    <section class="schedule" aria-labelledby="schedule-label">
+      <div class="schedule-head">
+        <h2 id="schedule-label" class="section-label">Schedule</h2>
+        <div class="schedule-nav">
+          <button class="schedule-nav-btn" data-schedule-prev aria-label="Previous month">‹</button>
+          <span class="schedule-month-label" id="schedule-month-label">—</span>
+          <button class="schedule-nav-btn" data-schedule-next aria-label="Next month">›</button>
+          <button class="schedule-today-btn" data-schedule-today>Today</button>
+        </div>
+      </div>
+      <div class="schedule-body">
+        <div class="schedule-calendar" id="schedule-calendar"></div>
+        <aside class="schedule-agenda" id="schedule-agenda"></aside>
+      </div>
+    </section>
+  </div>
+
+  <!-- Course quick-peek popover (positioned dynamically). -->
+  <div id="course-peek" class="course-peek" role="dialog" aria-label="Course quick peek" hidden></div>
+
+  <!-- Course overflow menu (positioned dynamically). -->
+  <div id="course-menu" class="course-menu" role="menu" hidden></div>
+
+  <!-- Assignment notes popover (positioned dynamically). -->
+  <div id="notes-popover" class="notes-popover" role="dialog" aria-label="Notes" hidden></div>
+
+  <!-- Notifications bell popover (positioned dynamically). -->
+  <div id="bell-popover" class="bell-popover" role="dialog" aria-label="Notifications" hidden></div>
+
+  <!-- Profile dropdown (positioned dynamically). -->
+  <div id="profile-menu" class="profile-menu" role="menu" hidden></div>
+
+  <!-- Settings popover (positioned dynamically). -->
+  <div id="settings-popover" class="settings-popover" role="dialog" aria-label="Settings" hidden></div>
+
+  <!-- Logged-out screen shown when auth fails on boot. -->
+  <div id="logged-out" class="logged-out" hidden>
+    <img src="assets/icon-128.png" alt="" class="logged-out-mark">
+    <h1>Hmm — you’re not signed into BigSky.</h1>
+    <p>SmallSky needs your BigSky session to show real data.</p>
+    <a class="logged-out-cta" href="https://bigsky.benilde.edu.ph/d2l/login">Open BigSky login</a>
+    <button class="logged-out-override" id="logged-out-override">I am actually logged in — let me through</button>
+  </div>
+
+  <!-- Hidden file input for course photo upload. -->
+  <input id="photo-upload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none">
+
+  <!-- Toast for upload feedback. -->
+  <div id="smallsky-toast" class="toast" hidden></div>
+
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

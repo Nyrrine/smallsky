@@ -1,0 +1,47 @@
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+
+# Editor / IDE
+.vscode/
+.idea/
+.history/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment + credentials — NEVER commit these
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+
+# Development-only folder: probe scripts that require live BigSky credentials,
+# captured HAR files, screenshots of authenticated pages, and Joaquin's whoami
+# data. None of this is referenced by the extension at runtime.
+recon/
+
+# Personal cached course banner images from D2L. Each user fetches their own
+# at runtime via api.courseImageUrl(); these stale copies are dev artifacts.
+assets/courses/
+
+# Distribution / build outputs
+*.zip
+*.crx
+dist/
+build/
+out/
+
+# Node (if a build step is ever added)
+node_modules/
+
+# Quick test files
+scratch/
+tmp/

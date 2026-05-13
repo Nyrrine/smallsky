@@ -1,0 +1,29 @@
+#smallsky-launcher {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 8px 8px;
+  background: #FFFFFF;
+  color: #2A2724;
+  border: 1px solid #ECE6DC;
+  border-radius: 999px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(40, 35, 30, 0.12);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+#smallsky-launcher:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(40, 35, 30, 0.16);
+}
+#smallsky-launcher img {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
