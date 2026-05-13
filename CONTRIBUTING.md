@@ -59,7 +59,12 @@ To test changes:
 - Custom themes (pastel palettes, sticker packs)
 - Better D2L API recon — there may be more useful endpoints we haven't discovered yet (see `recon/` in earlier history)
 - Translations (Filipino especially)
-- Accessibility audit + keyboard navigation polish
+
+### Accessibility — especially this
+
+SmallSky has real gaps for students who use assistive tech. I'd love help closing them, but more importantly: **if you're a student who relies on a screen reader, keyboard navigation, high-contrast / larger text, reduced motion, voice control, switch access, or any other accommodation — please reach out and tell me what would make SmallSky usable for you.**
+
+I can't fix what I don't know about. Even a one-line "this part doesn't work with [tool]" message helps me prioritize. Reach out on [Discord](https://discord.gg/DTvRR5qxxh), [open an issue](https://github.com/Nyrrine/smallsky/issues), or DM me directly — whichever's easiest for you. PRs from anyone working in accessibility are very welcome.
 
 ## Filing bugs
 

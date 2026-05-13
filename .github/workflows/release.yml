@@ -1,0 +1,50 @@
+name: Release on tag
+
+# Fires when a tag matching v* (v1.0.0, v1.1.0, etc.) is pushed.
+# Builds a clean distribution zip, creates a GitHub Release, and uploads
+# the zip as a release asset. Users (and SmallSky's in-extension update
+# notifier) can then point at /releases/latest for the download link.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Build distribution zip
+        run: |
+          # Stage a clean copy under _dist/smallsky/ — keeps the top-level
+          # folder name predictable when users unzip.
+          mkdir -p _dist/smallsky
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='recon' \
+            --exclude='_dist' \
+            --exclude='*.zip' \
+            --exclude='.DS_Store' \
+            ./ _dist/smallsky/
+          cd _dist
+          zip -r "../smallsky-${GITHUB_REF_NAME}.zip" smallsky
+
+      - name: Verify zip has nothing sensitive
+        run: |
+          unzip -l "smallsky-${GITHUB_REF_NAME}.zip" | grep -E "(recon/|\.git/|\.env)" && exit 1 || echo "✓ no sensitive paths in archive"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SmallSky ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: smallsky-${{ github.ref_name }}.zip

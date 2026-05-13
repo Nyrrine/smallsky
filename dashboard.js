@@ -14,6 +14,7 @@ import * as derive from './lib/derive.js';
 import { ICONS } from './lib/icons.js';
 import { makeLimiter } from './lib/queue.js';
 import { search as searchAll } from './lib/search.js';
+import { checkForUpdate, getUpdateStatus, getDismissedVersion, dismissUpdate } from './lib/updater.js';
 
 const TTL = store.TTL;
 const fetchLimit = makeLimiter(6);  // max 6 concurrent fetches to BigSky
@@ -94,6 +95,16 @@ async function init() {
   [state.prefs, state.photos, state.notes, state._read] = await Promise.all([
     store.getPrefs(), store.getCoursePhotos(), store.getNotes(), store.getRead(),
   ]);
+
+  // Update banner: render any cached status immediately, then kick off a
+  // fresh check in the background (don't block first paint).
+  state.updateStatus = await getUpdateStatus();
+  state.updateDismissed = await getDismissedVersion();
+  renderUpdateBanner();
+  checkForUpdate().then(async () => {
+    state.updateStatus = await getUpdateStatus();
+    renderUpdateBanner();
+  }).catch(() => {});
 
   try {
     // swr=true: every layer serves stale cache instantly and refreshes in
@@ -843,9 +854,15 @@ async function toggleSettings(anchor) {
       <div class="settings-about">
         <div class="settings-about-head">
           <img class="settings-about-icon" src="assets/icon-128.png" alt="">
-          <div class="settings-about-version">SmallSky v1.0.0</div>
+          <div>
+            <div class="settings-about-version">SmallSky v${escapeHtml(chrome.runtime.getManifest().version)}</div>
+            ${(state.updateStatus && state.updateStatus.available && state.updateStatus.latest !== state.updateDismissed)
+              ? `<button class="settings-about-update" data-update-action="show">v${escapeHtml(state.updateStatus.latest)} available →</button>`
+              : ''}
+          </div>
         </div>
-        <div class="settings-about-tag">Made by Joaquin Bryan G. Ross · ID 125.</div>
+        <div class="settings-about-tag">Made by Joaquin Bryan G. Ross</div>
+        <div class="settings-about-subtag">Information Systems · ID 125</div>
         <div class="settings-about-links">
           <a class="settings-about-link settings-about-link--discord" href="https://discord.gg/DTvRR5qxxh" target="_blank" rel="noopener">
             ${ICONS.discord}
@@ -874,6 +891,7 @@ async function toggleSettings(anchor) {
             <li><strong>Background sync + Chrome badge</strong> — service worker pings every 5 minutes, toolbar icon shows count of items due within 48 hours.</li>
             <li><strong>Auto-open SmallSky</strong> — optional redirect from BigSky's homepage to SmallSky, so you land here first thing.</li>
             <li><strong>Smart caching</strong> — tiered TTLs per resource (1 min for submission status, 24 h for whoami), stale-while-revalidate so first paint is always instant.</li>
+            <li><strong>Daily update check</strong> — SmallSky pings GitHub once a day; a soft banner appears when a new version is out.</li>
             <li>Lots of soft touches — animated cog spin, cute logo shake, hover effects, friendly empty states.</li>
           </ul>
         </div>
@@ -913,6 +931,11 @@ function wireGlobalSettingsHandlers() {
   });
   $('#settings-popover').addEventListener('click', async (e) => {
     if (e.target.closest('[data-settings-close]')) { closeSettings(); return; }
+    if (e.target.closest('[data-update-action="show"]')) {
+      closeSettings();
+      openUpdateModal();
+      return;
+    }
     const action = e.target.closest('[data-settings-action]')?.dataset.settingsAction;
     if (action === 'refresh') {
       const btn = e.target.closest('button');
@@ -1527,6 +1550,105 @@ async function getTOCCached(courseId) {
   const toc = await api.courseTOC(courseId);
   await store.cacheSet(key, toc, 30 * 60 * 1000); // 30 min
   return toc;
+}
+
+/* ---- update notifier (banner + modal) ---- */
+
+function renderUpdateBanner() {
+  const banner = $('#update-banner');
+  const s = state.updateStatus;
+  if (!s || !s.available || s.latest === state.updateDismissed) {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML = `
+    <div class="update-banner-body">
+      <span class="update-banner-mark">🌥️</span>
+      <span class="update-banner-text">
+        <strong>SmallSky v${escapeHtml(s.latest)}</strong> is available
+        <span class="muted"> · you have v${escapeHtml(s.current)}</span>
+      </span>
+    </div>
+    <div class="update-banner-actions">
+      <button class="update-banner-btn update-banner-btn--primary" data-update-action="show">See what's new</button>
+      <button class="update-banner-btn" data-update-action="dismiss" aria-label="Dismiss">${ICONS.close}</button>
+    </div>
+  `;
+  banner.querySelector('[data-update-action="show"]').addEventListener('click', openUpdateModal);
+  banner.querySelector('[data-update-action="dismiss"]').addEventListener('click', async () => {
+    await dismissUpdate(s.latest);
+    state.updateDismissed = s.latest;
+    renderUpdateBanner();
+    showToast(`Reminders for v${s.latest} dismissed.`);
+  });
+}
+
+function openUpdateModal() {
+  const s = state.updateStatus;
+  if (!s || !s.available) return;
+  const info = s.info || {};
+  const changes = Array.isArray(info.changes) && info.changes.length ? info.changes : ['(no changelog provided)'];
+  const released = info.released ? new Date(info.released + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+  const downloadUrl = info.downloadUrl || `https://github.com/Nyrrine/smallsky/archive/refs/heads/main.zip`;
+  const discordUrl = info.discordUrl || 'https://discord.gg/DTvRR5qxxh';
+
+  const modal = $('#update-modal');
+  modal.innerHTML = `
+    <div class="update-modal-card">
+      <button class="update-modal-close" aria-label="Close" data-update-close>${ICONS.close}</button>
+      <h2 class="update-modal-title">SmallSky v${escapeHtml(s.latest)} is out 🌥️</h2>
+      ${released ? `<div class="update-modal-released">Released ${escapeHtml(released)} · you have v${escapeHtml(s.current)}</div>` : ''}
+      <div class="update-modal-section">
+        <h3>What's new</h3>
+        <ul class="update-modal-changes">
+          ${changes.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+        </ul>
+      </div>
+      <div class="update-modal-section">
+        <h3>How to update (about 1 minute)</h3>
+        <ol class="update-modal-steps">
+          <li>
+            <strong>Download the new version</strong>
+            <a class="update-modal-action" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">↓ Download v${escapeHtml(s.latest)}</a>
+          </li>
+          <li>
+            <strong>Replace your <code>smallsky</code> folder</strong>
+            <p class="muted">Unzip the new download and replace the folder you originally installed from.</p>
+          </li>
+          <li>
+            <strong>Reload SmallSky</strong>
+            <p class="muted">Open <code>chrome://extensions</code>, find SmallSky, click the ↻ reload icon. Then refresh this dashboard.</p>
+          </li>
+        </ol>
+        <p class="muted update-modal-discord">
+          Prefer a picture guide? <a href="${escapeHtml(discordUrl)}" target="_blank" rel="noopener">Join the Discord</a> — the install thread covers updates too.
+        </p>
+      </div>
+      <div class="update-modal-foot">
+        <button class="update-modal-btn" data-update-action="dismiss-modal">Remind me later</button>
+      </div>
+    </div>
+  `;
+  modal.hidden = false;
+  requestAnimationFrame(() => modal.classList.add('visible'));
+
+  modal.querySelector('[data-update-close]').addEventListener('click', closeUpdateModal);
+  modal.querySelector('[data-update-action="dismiss-modal"]').addEventListener('click', async () => {
+    await dismissUpdate(s.latest);
+    state.updateDismissed = s.latest;
+    closeUpdateModal();
+    renderUpdateBanner();
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeUpdateModal();
+  }, { once: true });
+}
+
+function closeUpdateModal() {
+  const modal = $('#update-modal');
+  modal.classList.remove('visible');
+  setTimeout(() => { modal.hidden = true; }, 160);
 }
 
 /* ---- top-bar search (Google-style, persistent) ---- */

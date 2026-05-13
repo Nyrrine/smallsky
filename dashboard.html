@@ -10,6 +10,7 @@
 </head>
 <body>
   <div class="page">
+    <div id="update-banner" class="update-banner" hidden></div>
     <header class="topbar">
       <div class="topbar-search-wrap">
         <div class="topbar-search">
@@ -90,6 +91,9 @@
 
   <!-- Settings popover (positioned dynamically). -->
   <div id="settings-popover" class="settings-popover" role="dialog" aria-label="Settings" hidden></div>
+
+  <!-- Update modal (centered, dismissable). -->
+  <div id="update-modal" class="update-modal" role="dialog" aria-label="Update available" hidden></div>
 
   <!-- Logged-out screen shown when auth fails on boot. -->
   <div id="logged-out" class="logged-out" hidden>

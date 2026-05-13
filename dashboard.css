@@ -116,6 +116,223 @@ ol, ul { list-style: none; }
   padding: 28px 40px 64px;
 }
 
+/* ──────── update banner (top of dashboard) ──────── */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--text);
+}
+.update-banner[hidden] { display: none !important; }
+.update-banner-body { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.update-banner-mark { font-size: 16px; flex-shrink: 0; }
+.update-banner-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-banner-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.update-banner-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.update-banner-btn:hover { background: var(--surface); border-color: var(--accent); }
+.update-banner-btn--primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.update-banner-btn--primary:hover { background: var(--accent); border-color: var(--accent); opacity: 0.9; }
+.update-banner-btn svg { width: 14px; height: 14px; }
+
+/* ──────── update modal ──────── */
+.update-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  background: rgba(20, 16, 12, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.update-modal[hidden] { display: none !important; }
+.update-modal.visible { opacity: 1; }
+.update-modal-card {
+  position: relative;
+  width: min(560px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lift);
+  padding: 28px 28px 22px;
+  transform: translateY(-8px);
+  transition: transform 200ms ease;
+}
+.update-modal.visible .update-modal-card { transform: translateY(0); }
+.update-modal-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--faint);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.update-modal-close:hover { background: var(--surface-soft); color: var(--text); }
+.update-modal-close svg { width: 14px; height: 14px; }
+.update-modal-title {
+  font-family: "Iowan Old Style", "Charter", "Source Serif Pro", Georgia, serif;
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+.update-modal-released { font-size: 12px; color: var(--muted); margin-bottom: 22px; }
+.update-modal-section { margin-bottom: 22px; }
+.update-modal-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 10px;
+}
+.update-modal-changes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.update-modal-changes li {
+  position: relative;
+  padding: 5px 0 5px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.update-modal-changes li::before {
+  content: "·";
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 700;
+}
+.update-modal-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  counter-reset: step;
+}
+.update-modal-steps li {
+  counter-increment: step;
+  position: relative;
+  padding: 10px 0 10px 36px;
+  font-size: 13px;
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+}
+.update-modal-steps li:first-child { border-top: 0; padding-top: 0; }
+.update-modal-steps li:first-child::before { top: 0; }
+.update-modal-steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 22px;
+  height: 22px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.update-modal-steps strong { display: block; margin-bottom: 4px; color: var(--text); }
+.update-modal-steps p { color: var(--muted); font-size: 12px; }
+.update-modal-steps code {
+  font-family: "SF Mono", "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.update-modal-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 7px 14px;
+  background: var(--accent);
+  color: white;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.update-modal-action:hover { opacity: 0.92; }
+.update-modal-discord { margin-top: 14px; font-size: 12px; }
+.update-modal-discord a { color: var(--accent); }
+.update-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.update-modal-btn {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.update-modal-btn:hover { color: var(--text); border-color: var(--muted); }
+
+/* Update indicator inside settings About */
+.settings-about-update {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+.settings-about-update:hover { text-decoration: underline; }
+
 /* ──────── topbar ──────── */
 .topbar {
   display: flex;
@@ -1055,7 +1272,8 @@ ol, ul { list-style: none; }
   flex-shrink: 0;
 }
 .settings-about-version { color: var(--text); font-weight: 600; }
-.settings-about-tag { color: var(--faint); margin-top: 4px; font-style: italic; }
+.settings-about-tag { color: var(--muted); margin-top: 6px; }
+.settings-about-subtag { color: var(--faint); margin-top: 2px; font-style: italic; }
 .settings-about-links {
   display: flex;
   flex-wrap: wrap;

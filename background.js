@@ -13,10 +13,13 @@
 import * as api from './lib/api.js';
 import * as store from './lib/store.js';
 import { makeLimiter } from './lib/queue.js';
+import { checkForUpdate } from './lib/updater.js';
 
 const DASHBOARD_URL = chrome.runtime.getURL('dashboard.html');
 const ALARM_NAME = 'smallsky-sync';
+const UPDATE_ALARM = 'smallsky-update-check';
 const SYNC_INTERVAL_MINUTES = 5;
+const UPDATE_INTERVAL_MINUTES = 24 * 60;   // daily
 const DUE_HORIZON_MS = 48 * 60 * 60 * 1000;  // 48 hours
 const NEW_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
 const URGENT_COLOR  = '#B86F47'; // matches --urgent
@@ -40,25 +43,34 @@ chrome.action.onClicked.addListener(async () => {
 
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('SmallSky installed.');
-  await ensureAlarm();
+  await ensureAlarms();
   // Don't wait — kick off an immediate sync so the badge is meaningful on first install.
   runSync().catch(e => console.warn('initial sync failed:', e.message));
+  // Also check for updates shortly after install (in case user is upgrading).
+  setTimeout(() => checkForUpdate().catch(() => {}), 8000);
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  await ensureAlarm();
+  await ensureAlarms();
 });
 
-async function ensureAlarm() {
+async function ensureAlarms() {
   const existing = await chrome.alarms.get(ALARM_NAME);
   if (!existing) {
     chrome.alarms.create(ALARM_NAME, { periodInMinutes: SYNC_INTERVAL_MINUTES });
   }
+  const upd = await chrome.alarms.get(UPDATE_ALARM);
+  if (!upd) {
+    chrome.alarms.create(UPDATE_ALARM, { periodInMinutes: UPDATE_INTERVAL_MINUTES });
+  }
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== ALARM_NAME) return;
-  await runSync().catch(e => console.warn('sync failed:', e.message));
+  if (alarm.name === ALARM_NAME) {
+    await runSync().catch(e => console.warn('sync failed:', e.message));
+  } else if (alarm.name === UPDATE_ALARM) {
+    await checkForUpdate().catch(e => console.warn('update check failed:', e.message));
+  }
 });
 
 /* ---- sync routine ---- */
