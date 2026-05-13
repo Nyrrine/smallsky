@@ -1,0 +1,75 @@
+name: Lint
+
+# Runs on every push to main + every PR. Catches:
+#   - JSON syntax errors in manifest.json / version.json / any *.json
+#   - JS syntax errors in any source .js file
+#   - Files referenced by manifest.json that don't actually exist on disk
+#
+# It's intentionally minimal — no eslint, no prettier, no build step.
+# Designed to fail fast on real bugs without forcing a tooling dependency.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate all JSON files
+        run: |
+          set -e
+          shopt -s globstar nullglob
+          for f in manifest.json version.json **/*.json; do
+            [[ "$f" == node_modules/* ]] && continue
+            [[ "$f" == recon/* ]] && continue
+            echo "  $f"
+            python3 -m json.tool "$f" > /dev/null
+          done
+          echo "✓ JSON valid"
+
+      - name: Syntax-check JS files
+        run: |
+          set -e
+          find . \
+            \( -path ./.git -o -path ./node_modules -o -path ./recon -o -path ./.github \) -prune \
+            -o -name "*.js" -print | while read f; do
+              echo "  $f"
+              node --check "$f"
+            done
+          echo "✓ JS syntax clean"
+
+      - name: Verify all manifest-referenced files exist
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, glob
+          with open('manifest.json') as f: m = json.load(f)
+          missing = []
+          def check(path):
+              if path and '*' not in path and not os.path.exists(path):
+                  missing.append(path)
+          if 'background' in m and 'service_worker' in m['background']:
+              check(m['background']['service_worker'])
+          for cs in m.get('content_scripts', []):
+              for f in cs.get('js', []) + cs.get('css', []):
+                  check(f)
+          for size, path in m.get('icons', {}).items():
+              check(path)
+          for war in m.get('web_accessible_resources', []):
+              for r in war.get('resources', []):
+                  if '*' not in r:
+                      check(r)
+          if missing:
+              print('Missing files referenced in manifest:')
+              for m in missing: print(f'  - {m}')
+              sys.exit(1)
+          print('✓ All manifest-referenced files exist')
+          PY

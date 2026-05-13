@@ -847,6 +847,13 @@ async function toggleSettings(anchor) {
         </div>
         <button class="settings-action settings-action--danger" data-settings-action="clear">Clear</button>
       </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-title">Updates</div>
+          <div class="settings-row-sub">SmallSky checks daily. Pull right now if you want.</div>
+        </div>
+        <button class="settings-action" data-settings-action="check-update">Check now</button>
+      </div>
     </section>
 
     <section class="settings-section">
@@ -948,6 +955,24 @@ function wireGlobalSettingsHandlers() {
       await store.cacheClear();
       showToast('Cache cleared. Reloading…');
       setTimeout(() => location.reload(), 600);
+    } else if (action === 'check-update') {
+      const btn = e.target.closest('button');
+      btn.textContent = 'Checking…';
+      btn.disabled = true;
+      const result = await checkForUpdate();
+      btn.textContent = 'Check now';
+      btn.disabled = false;
+      state.updateStatus = await getUpdateStatus();
+      renderUpdateBanner();
+      if (!result) {
+        showToast('Couldn\'t reach GitHub. Try again later.');
+      } else if (result.available) {
+        closeSettings();
+        showToast(`v${result.latest} is out — opening details…`);
+        setTimeout(openUpdateModal, 300);
+      } else {
+        showToast(`You're on the latest version (v${result.current}).`);
+      }
     }
   });
   $('#settings-popover').addEventListener('change', async (e) => {

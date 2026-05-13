@@ -1,0 +1,32 @@
+name: Manifest sync
+
+# Verifies that manifest.json and version.json always agree on the version
+# number. If they drift, the in-extension update notifier will lie to users
+# (saying an update is available when it isn't, or missing one that is).
+# Run `python3 tools/bump-version.py X.Y.Z` to keep them aligned.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare manifest.json#version against version.json#version
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          with open('manifest.json') as f: m = json.load(f)
+          with open('version.json') as f: v = json.load(f)
+          if m['version'] != v['version']:
+              print(f"❌ Mismatch:")
+              print(f"   manifest.json: {m['version']}")
+              print(f"   version.json:  {v['version']}")
+              print()
+              print("Fix with: python3 tools/bump-version.py <version>")
+              sys.exit(1)
+          print(f"✓ Both at v{m['version']}")
+          PY
