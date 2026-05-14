@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SmallSky",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Soft, fast student dashboard for BigSky (D2L Brightspace) at De La Salle-CSB.",
   "permissions": [
     "storage",

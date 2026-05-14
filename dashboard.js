@@ -35,6 +35,44 @@ const fetchLimit = makeLimiter(6);  // max 6 concurrent fetches to BigSky
  * The bg/accent hex values here are LIGHT-mode previews used only by the
  * settings swatch picker; the actual theme is applied via CSS variables. */
 const VALID_PALETTES = ['default', 'ocean', 'lavender', 'rose', 'mocha', 'benilde', 'slate', 'plain'];
+
+/* Per-version changelog shown in Settings → About → "What's new in vX".
+ * Each entry is a list of <li>-ready HTML strings (light formatting allowed,
+ * author-controlled so no sanitization needed). Add a new entry whenever
+ * you bump the version — see CONTRIBUTING.md release checklist. */
+const CHANGELOG = {
+  '1.1.1': [
+    'Fixed the "What\'s new" panel in Settings showing the old v1.0.0 changelog instead of the version you\'re actually on. It\'s now dynamic — future releases just need a new entry in the changelog map, no separate HTML edit.',
+  ],
+  '1.1.0': [
+    '<strong>Online class schedule</strong> — set meeting days, time, and link per course in the "···" menu. A green LIVE pill appears on the tile during class, with a 15-min countdown before.',
+    '<strong>Eight color themes</strong> — Default, Cipher, Castorice, Hyacine, Cerydra, Hysilens, Mydei, Anaxa. Each has its own light/dark variant; switching plays a satisfying wave transition.',
+    '<strong>Custom profile avatar</strong> — upload any photo in the profile menu, cropped to a circle, stored locally.',
+    '<strong>Smooth slide-open for What\'s New</strong> — announcements expand inline with the My Classes column riding the same height change.',
+    '<strong>Bell ring animation</strong> paired with the settings cog spin — friendly click acknowledgments.',
+    '<strong>Old course data cleanup</strong> — Settings → Data has a new Scan button to remove schedules and photos from courses no longer in your list.',
+    'No more white flash on dark-mode reloads — the theme now applies before first paint.',
+    'Plenty of polish — fixed the course peek occasionally flying to the corner, removed a stuck-hover glow on Up Next cards, friendlier urgency indicators, and a long list of smaller fixes.',
+    'Major internal refactor — split the main dashboard into modular UI files. Invisible to you, but future updates ship faster and cleaner.',
+  ],
+  '1.0.0': [
+    'Live BigSky data — courses, assignments, quizzes, grades, announcements pull straight from D2L\'s API with proper auth-session reuse.',
+    '<strong>Up Next</strong> — the four most urgent unsubmitted assignments and quizzes, sorted by due date, with real submission detection.',
+    '<strong>What\'s New</strong> — recent announcements with inline expand (no leaving the dashboard to read).',
+    '<strong>Month Schedule</strong> — calendar view of every dated event across all your courses, with day-by-day agenda.',
+    '<strong>Course tiles</strong> — color-coded pastels (stable per course code), real BigSky course photos, "next due" + "latest announcement" highlights, click-to-peek with weeks navigation.',
+    '<strong>Pin / hide / reorder</strong> — make the grid yours; admin courses move to a collapsed "Other" section.',
+    '<strong>Custom course photos</strong> — upload anything, auto-cropped to the BigSky banner aspect.',
+    '<strong>Local notes</strong> — pencil icon on every Up Next card, scratchpad per assignment, saved on this device only.',
+    '<strong>Cross-course search</strong> — press <kbd>/</kbd> to fuzzy-search announcements, modules, assignments, quizzes — all instant.',
+    '<strong>Light / dark theme</strong> — click the moon/sun for a smooth circle-reveal transition between themes.',
+    '<strong>Background sync + Chrome badge</strong> — service worker pings every 5 minutes, toolbar icon shows count of items due within 48 hours.',
+    '<strong>Auto-open SmallSky</strong> — optional redirect from BigSky\'s homepage to SmallSky, so you land here first thing.',
+    '<strong>Smart caching</strong> — tiered TTLs per resource (1 min for submission status, 24 h for whoami), stale-while-revalidate so first paint is always instant.',
+    '<strong>Daily update check</strong> — SmallSky pings GitHub once a day; a soft banner appears when a new version is out.',
+    'Lots of soft touches — animated cog spin, cute logo shake, hover effects, friendly empty states.',
+  ],
+};
 // Display names are decorative — the `id` is the canonical key in CSS,
 // localStorage, and the data-theme attribute. Renaming `name` is safe;
 // don't touch `id` without migrating storage.
@@ -997,28 +1035,19 @@ async function toggleSettings(anchor) {
           </a>
         </div>
       </div>
-      <details class="settings-changelog">
-        <summary>What's new in v1.0.0</summary>
-        <div class="settings-changelog-body">
-          <ul>
-            <li>Live BigSky data — courses, assignments, quizzes, grades, announcements pull straight from D2L's API with proper auth-session reuse.</li>
-            <li><strong>Up Next</strong> — the four most urgent unsubmitted assignments and quizzes, sorted by due date, with real submission detection.</li>
-            <li><strong>What's New</strong> — recent announcements with inline expand (no leaving the dashboard to read).</li>
-            <li><strong>Month Schedule</strong> — calendar view of every dated event across all your courses, with day-by-day agenda.</li>
-            <li><strong>Course tiles</strong> — color-coded pastels (stable per course code), real BigSky course photos, "next due" + "latest announcement" highlights, click-to-peek with weeks navigation.</li>
-            <li><strong>Pin / hide / reorder</strong> — make the grid yours; admin courses move to a collapsed "Other" section.</li>
-            <li><strong>Custom course photos</strong> — upload anything, auto-cropped to the BigSky banner aspect.</li>
-            <li><strong>Local notes</strong> — pencil icon on every Up Next card, scratchpad per assignment, saved on this device only.</li>
-            <li><strong>Cross-course search</strong> — press <kbd>/</kbd> to fuzzy-search announcements, modules, assignments, quizzes — all instant.</li>
-            <li><strong>Light / dark theme</strong> — click the moon/sun for a smooth circle-reveal transition between themes.</li>
-            <li><strong>Background sync + Chrome badge</strong> — service worker pings every 5 minutes, toolbar icon shows count of items due within 48 hours.</li>
-            <li><strong>Auto-open SmallSky</strong> — optional redirect from BigSky's homepage to SmallSky, so you land here first thing.</li>
-            <li><strong>Smart caching</strong> — tiered TTLs per resource (1 min for submission status, 24 h for whoami), stale-while-revalidate so first paint is always instant.</li>
-            <li><strong>Daily update check</strong> — SmallSky pings GitHub once a day; a soft banner appears when a new version is out.</li>
-            <li>Lots of soft touches — animated cog spin, cute logo shake, hover effects, friendly empty states.</li>
-          </ul>
-        </div>
-      </details>
+      ${(() => {
+        const v = chrome.runtime.getManifest().version;
+        const entries = CHANGELOG[v];
+        if (!entries || !entries.length) return '';
+        return `
+          <details class="settings-changelog">
+            <summary>What's new in v${escapeHtml(v)}</summary>
+            <div class="settings-changelog-body">
+              <ul>${entries.map(li => `<li>${li}</li>`).join('')}</ul>
+            </div>
+          </details>
+        `;
+      })()}
     </section>
   `;
   pop.hidden = false;
