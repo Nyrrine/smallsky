@@ -1,10 +1,18 @@
 {
-  "version": "1.0.0",
-  "released": "2026-05-13",
+  "version": "1.1.0",
+  "released": "2026-05-15",
   "downloadUrl": "https://github.com/Nyrrine/smallsky/releases/latest",
   "releasesPageUrl": "https://github.com/Nyrrine/smallsky/releases",
   "discordUrl": "https://discord.gg/DTvRR5qxxh",
   "changes": [
-    "Initial public release of SmallSky."
+    "Online class schedule with Live badge \u2014 set meeting days, time, and link per course. A green LIVE pill appears on the tile during class, with a 15-minute countdown before it starts.",
+    "Eight color themes \u2014 Default, Cipher, Castorice, Hyacine, Cerydra, Hysilens, Mydei, Anaxa. Each with its own light/dark variant and a satisfying wave transition between them.",
+    "Custom profile avatar \u2014 upload any photo, auto-cropped to a circle. Cosmetic only, stored locally on your device.",
+    "Smooth slide-open for What's New \u2014 announcements expand inline with the classes column riding the same height change.",
+    "Bell ring animation paired with the cog spin \u2014 friendly click acknowledgments on both notification and settings buttons.",
+    "Old course data cleanup \u2014 Settings \u2192 Data has a new Scan button to remove schedules and photos from courses no longer in your list.",
+    "No more white flash on dark-mode reloads \u2014 the theme now applies before first paint.",
+    "Plenty of polish \u2014 fixed the course peek occasionally flying to the corner, removed a stuck-hover glow on Up Next cards, friendlier urgency indicators, and a long list of smaller fixes.",
+    "Major internal refactor \u2014 dashboard.js split into modular UI files. Invisible to you, but means future updates ship faster and cleaner."
   ]
 }

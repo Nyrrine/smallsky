@@ -13,11 +13,41 @@ import * as store from './lib/store.js';
 import * as derive from './lib/derive.js';
 import { ICONS } from './lib/icons.js';
 import { makeLimiter } from './lib/queue.js';
-import { search as searchAll } from './lib/search.js';
 import { checkForUpdate, getUpdateStatus, getDismissedVersion, dismissUpdate } from './lib/updater.js';
+import { DAY_MS, CSB_ROOT_OU, escapeHtml, sanitizeAnnouncementHtml } from './lib/util.js';
+import { initDrawer, openTaskDrawer } from './lib/ui/drawer.js';
+import { initSchedule, renderSchedule } from './lib/ui/schedule.js';
+import { initAnnouncementModal, openAnnouncementModal } from './lib/ui/announce-modal.js';
+import { initUpdateModal, renderUpdateBanner, openUpdateModal } from './lib/ui/update-modal.js';
+import { showToast, showError } from './lib/ui/toast.js';
+import { positionAnchored, bindDismissable } from './lib/ui/popover.js';
+import { initPhoto, triggerPhotoUpload } from './lib/ui/photo.js';
+import { initAvatar, triggerAvatarUpload, removeAvatar } from './lib/ui/avatar.js';
+import { initClassSchedule, openScheduleEditor, liveBadgeHtml } from './lib/ui/class-schedule.js';
+import { initSearch } from './lib/ui/search.js';
 
 const TTL = store.TTL;
 const fetchLimit = makeLimiter(6);  // max 6 concurrent fetches to BigSky
+
+/* Theme palettes — declared at module top so they're initialized before
+ * init() runs (which calls initTheme() that references VALID_PALETTES).
+ * Each palette has matching CSS blocks in dashboard.css under [data-theme="<id>"].
+ * The bg/accent hex values here are LIGHT-mode previews used only by the
+ * settings swatch picker; the actual theme is applied via CSS variables. */
+const VALID_PALETTES = ['default', 'ocean', 'lavender', 'rose', 'mocha', 'benilde', 'slate', 'plain'];
+// Display names are decorative — the `id` is the canonical key in CSS,
+// localStorage, and the data-theme attribute. Renaming `name` is safe;
+// don't touch `id` without migrating storage.
+const PALETTES = [
+  { id: 'default',  name: 'Default',   bg: '#FAF2E2', accent: '#5B4FB8' },
+  { id: 'mocha',    name: 'Cipher',    bg: '#ECDBC2', accent: '#8B5A3C' },
+  { id: 'lavender', name: 'Castorice', bg: '#EFE4F4', accent: '#8B5CF6' },
+  { id: 'rose',     name: 'Hyacine',   bg: '#F5DCE0', accent: '#C75B7A' },
+  { id: 'ocean',    name: 'Cerydra',   bg: '#E3EEF7', accent: '#4A7FC9' },
+  { id: 'slate',    name: 'Hysilens',  bg: '#DBE3EC', accent: '#455A75' },
+  { id: 'plain',    name: 'Mydei',     bg: '#FFFFFF', accent: '#FF4500' },
+  { id: 'benilde',  name: 'Anaxa',     bg: '#DCEDE1', accent: '#006937' },
+];
 
 /* Per-resource cached fetcher with concurrency cap. */
 function cachedFetch(key, fn, ttl, opts = {}) {
@@ -32,7 +62,10 @@ function cachedFetch(key, fn, ttl, opts = {}) {
 async function loadCourseBundle(ouId, { swr = true, onPartial = null } = {}) {
   const ks = (n) => `${n}:${ouId}`;
   // Map cache key name → bundle property name (some differ).
-  const BUNDLE_KEY = { news: 'news', dropbox: 'dropbox', quizzes: 'quizzes', grades: 'grades', submitted: 'submittedFolderIds' };
+  const BUNDLE_KEY = {
+    news: 'news', dropbox: 'dropbox', quizzes: 'quizzes', grades: 'grades',
+    submitted: 'submittedFolderIds', quizAttempts: 'quizAttempts'
+  };
   const fire = (cacheName) => (v) => {
     if (onPartial) onPartial(ouId, BUNDLE_KEY[cacheName], v);
   };
@@ -45,18 +78,63 @@ async function loadCourseBundle(ouId, { swr = true, onPartial = null } = {}) {
     cachedFetch(ks('submitted'), () => api.dropboxSubmittedIds(ouId), TTL.submitted, { swr, onRefresh: fire('submitted') }),
   ]);
 
+  // Quiz attempts — one fetch per quiz, aggregated into a map keyed by quizId.
+  // Has to come AFTER we know which quizzes exist for this course.
+  const quizList = (quizzes.value && quizzes.value.Objects) || [];
+  const quizAttemptsResult = await cachedFetch(
+    ks('quizAttempts'),
+    async () => {
+      const out = {};
+      await Promise.all(quizList.map(q => fetchLimit(async () => {
+        try {
+          const data = await api.quizAttempts(ouId, q.QuizId);
+          out[q.QuizId] = summarizeQuizAttempts(data);
+        } catch (e) {
+          // 403 / 404 on individual quizzes is fine — quiz might not be open yet,
+          // user might lack access, etc. Just leave that quiz unsummarized.
+        }
+      })));
+      return out;
+    },
+    TTL.quizAttempts,
+    { swr, onRefresh: fire('quizAttempts') }
+  );
+
   return {
     news: news.value,
     dropbox: dropbox.value,
     quizzes: quizzes.value,
     grades: grades.value,
     submittedFolderIds: submitted.value,
+    quizAttempts: quizAttemptsResult.value,
+  };
+}
+
+/* Compact summary of an attempts API response, suitable for storage + UI. */
+function summarizeQuizAttempts(response) {
+  const objs = (response && response.Objects) || [];
+  const completed = objs.filter(a => a.AttemptCompleted);
+  const inProgress = objs.filter(a => a.AttemptInProgress);
+  // Latest completed attempt's score (D2L returns Score as a number or null)
+  let latestScore = null;
+  if (completed.length) {
+    const last = completed.sort((a, b) =>
+      new Date(b.AttemptCompleted) - new Date(a.AttemptCompleted)
+    )[0];
+    if (typeof last.AttemptScore === 'number') latestScore = last.AttemptScore;
+  }
+  return {
+    count: objs.length,
+    completedCount: completed.length,
+    inProgressCount: inProgress.length,
+    hasCompleted: completed.length > 0,
+    hasInProgress: inProgress.length > 0,
+    latestScore,
   };
 }
 
 /* ---- DOM helpers ---- */
 const $ = (sel) => document.querySelector(sel);
-const html = (str) => str; // (no-op, marker for readability)
 
 /* ---- top-level state ---- */
 const _today = new Date();
@@ -68,15 +146,13 @@ const state = {
   photos: {},           // ouId -> dataURL of custom course photo
   notes: {},            // taskId -> note text
   hiddenExpanded: false,
+  avatar: null,         // user-uploaded avatar dataURL (cosmetic)
+  classSchedules: {},   // ouId -> { link, blocks: [{ days, time, duration }] }
   scheduleYear: _today.getFullYear(),
   scheduleMonth: _today.getMonth(),
-  scheduleSelected: derive_dayKey(_today),
+  scheduleSelected: derive.dayKey(_today),
   err: null,
 };
-function derive_dayKey(d) {
-  // mirrors derive.dayKey — used before derive module is imported in some paths
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
 
 /* ---- bootstrap ---- */
 
@@ -91,10 +167,16 @@ async function init() {
   renderGreeting('…');
   wireGlobalEvents();
 
-  // Prefs (pin/hide) + custom photos + notes + read-state — load immediately so first render reflects them.
-  [state.prefs, state.photos, state.notes, state._read] = await Promise.all([
-    store.getPrefs(), store.getCoursePhotos(), store.getNotes(), store.getRead(),
+  // Prefs (pin/hide) + custom photos + notes + read-state + avatar + class schedules
+  // load immediately so first render reflects them.
+  [state.prefs, state.photos, state.notes, state._read, state.avatar, state.classSchedules] = await Promise.all([
+    store.getPrefs(), store.getCoursePhotos(), store.getNotes(),
+    store.getRead(), store.getAvatar(), store.getClassSchedules(),
   ]);
+
+  // Re-render once per minute so the Live badge countdown stays accurate
+  // and "soon" → "live" transitions happen automatically.
+  setInterval(() => { if (state.courses.length) render(); }, 60_000);
 
   // Update banner: render any cached status immediately, then kick off a
   // fresh check in the background (don't block first paint).
@@ -214,7 +296,7 @@ function renderTopbar() {
 }
 
 function refreshThemeIcon() {
-  const isDark = document.documentElement.dataset.theme === 'dark';
+  const isDark = document.documentElement.dataset.mode === 'dark';
   $('[data-action="theme"]').innerHTML = isDark ? ICONS.sun : ICONS.moon;
 }
 
@@ -240,12 +322,19 @@ function render() {
   const firstName = state.me ? state.me.FirstName : '…';
   renderGreeting(firstName);
 
-  // Avatar initials
-  if (state.me) {
-    const initials = (state.me.FirstName[0] || '') + (state.me.LastName[0] || '');
+  // Avatar — show custom photo if uploaded, else initials.
+  // D2L can return null/empty name fields on incomplete profiles, so guard both.
+  if (state.me || state.avatar) {
+    const fn = (state.me && state.me.FirstName) || '';
+    const ln = (state.me && state.me.LastName) || '';
+    const initials = (fn[0] || '') + (ln[0] || '');
     const avatar = $('.avatar');
-    avatar.textContent = initials.toUpperCase();
-    avatar.setAttribute('aria-label', `${state.me.FirstName} ${state.me.LastName}`);
+    if (state.avatar) {
+      avatar.innerHTML = `<img class="avatar-img" src="${escapeHtml(state.avatar)}" alt="">`;
+    } else {
+      avatar.textContent = initials.toUpperCase() || '·';
+    }
+    avatar.setAttribute('aria-label', `${fn} ${ln}`.trim() || 'Profile');
   }
 
 
@@ -264,162 +353,13 @@ function render() {
   updateBellBadge();
 }
 
-/* ---- Schedule render ---- */
-
-function renderSchedule() {
-  const events = derive.buildSchedule(state.courses, state.bundles);
-  const year = state.scheduleYear;
-  const month = state.scheduleMonth;
-  const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  $('#schedule-month-label').textContent = monthLabel;
-
-  // Build cells
-  const todayKey = derive.dayKey(new Date());
-  const days = derive.monthDays(year, month);
-  const wkHeaders = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-  const grid = $('#schedule-calendar');
-  grid.innerHTML = `
-    <div class="cal-weekheader">${wkHeaders.map(d => `<div>${d}</div>`).join('')}</div>
-    <div class="cal-grid">
-      ${days.map(d => {
-        const key = derive.dayKey(d);
-        const inMonth = d.getMonth() === month;
-        const isToday = key === todayKey;
-        const isSelected = key === state.scheduleSelected;
-        const evs = events[key] || [];
-        const visible = evs.slice(0, 3);
-        const more = evs.length - visible.length;
-        return `
-          <button class="cal-cell${inMonth ? '' : ' cal-cell--out'}${isToday ? ' cal-cell--today' : ''}${isSelected ? ' cal-cell--selected' : ''}"
-                  data-day="${key}">
-            <span class="cal-date">${d.getDate()}</span>
-            ${visible.length ? `
-              <div class="cal-events">
-                ${visible.map(ev => {
-                  const ci = derive.colorIndex(ev.courseCode);
-                  return `
-                    <span class="cal-chip chip-c${ci}${ev.submitted ? ' is-done' : ''}${ev.closed ? ' is-closed' : ''}" title="${escapeHtml(ev.courseCode)} — ${escapeHtml(ev.title)}">
-                      <span class="cal-chip-icon">${ICONS[ev.icon] || ICONS.bell}</span>
-                      <span class="cal-chip-text">${escapeHtml(ev.title)}</span>
-                    </span>
-                  `;
-                }).join('')}
-                ${more > 0 ? `<span class="cal-more">+${more} more</span>` : ''}
-              </div>
-            ` : ''}
-          </button>
-        `;
-      }).join('')}
-    </div>
-  `;
-
-  // Click handler for day cells
-  grid.querySelectorAll('.cal-cell').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.day;
-      const [y, m] = key.split('-').map(Number);
-      state.scheduleSelected = key;
-      // If user clicks a day in prev/next month, jump there too.
-      if (m - 1 !== state.scheduleMonth) {
-        state.scheduleYear = y;
-        state.scheduleMonth = m - 1;
-      }
-      renderSchedule();
-    });
-  });
-
-  // Agenda
-  renderAgenda(events[state.scheduleSelected] || [], state.scheduleSelected);
-}
-
-function renderAgenda(events, dayStr) {
-  const agenda = $('#schedule-agenda');
-  const pretty = derive.prettyDay(dayStr);
-  const sub = (() => {
-    const d = new Date(dayStr + 'T00:00:00');
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  })();
-
-  if (!events.length) {
-    agenda.innerHTML = `
-      <div class="agenda-head">
-        <div class="agenda-day">${escapeHtml(pretty)}</div>
-        <div class="agenda-sub">${escapeHtml(sub)}</div>
-      </div>
-      <div class="agenda-empty">Nothing scheduled.</div>
-    `;
-    return;
-  }
-
-  const byKind = { announcement: [], assignment: [], quiz: [] };
-  for (const e of events) (byKind[e.kind] || (byKind[e.kind] = [])).push(e);
-
-  const sections = [
-    { kind: 'announcement', label: 'Announcements', items: byKind.announcement },
-    { kind: 'assignment',   label: 'Assignments',   items: byKind.assignment },
-    { kind: 'quiz',         label: 'Quizzes',       items: byKind.quiz },
-  ].filter(s => s.items.length);
-
-  agenda.innerHTML = `
-    <div class="agenda-head">
-      <div class="agenda-day">${escapeHtml(pretty)}</div>
-      <div class="agenda-sub">${escapeHtml(sub)}</div>
-    </div>
-    ${sections.map(s => `
-      <div class="agenda-section">
-        <div class="agenda-section-label">${s.label}</div>
-        <div class="agenda-items">
-          ${s.items.map(ev => {
-            const ci = derive.colorIndex(ev.courseCode);
-            return `
-              <a class="agenda-item${ev.submitted ? ' is-done' : ''}${ev.closed ? ' is-closed' : ''}" href="${ev.href}" target="_blank" rel="noopener">
-                <span class="agenda-item-icon chip-c${ci}">${ICONS[ev.icon] || ICONS.bell}</span>
-                <div class="agenda-item-body">
-                  <div class="agenda-item-title">${escapeHtml(ev.title)}</div>
-                  <div class="agenda-item-meta">
-                    <span class="chip chip-c${ci}">${escapeHtml(ev.courseCode)}</span>
-                    ${ev.submitted ? '<span class="agenda-item-tag agenda-item-tag--done">Submitted ✓</span>' : ''}
-                    ${ev.closed && !ev.submitted ? '<span class="agenda-item-tag agenda-item-tag--closed">Missed</span>' : ''}
-                  </div>
-                </div>
-              </a>
-            `;
-          }).join('')}
-        </div>
-      </div>
-    `).join('')}
-  `;
-}
-
-function wireScheduleNav() {
-  $('[data-schedule-prev]').addEventListener('click', () => {
-    let y = state.scheduleYear, m = state.scheduleMonth - 1;
-    if (m < 0) { m = 11; y -= 1; }
-    state.scheduleYear = y; state.scheduleMonth = m;
-    renderSchedule();
-  });
-  $('[data-schedule-next]').addEventListener('click', () => {
-    let y = state.scheduleYear, m = state.scheduleMonth + 1;
-    if (m > 11) { m = 0; y += 1; }
-    state.scheduleYear = y; state.scheduleMonth = m;
-    renderSchedule();
-  });
-  $('[data-schedule-today]').addEventListener('click', () => {
-    const d = new Date();
-    state.scheduleYear = d.getFullYear();
-    state.scheduleMonth = d.getMonth();
-    state.scheduleSelected = derive.dayKey(d);
-    renderSchedule();
-  });
-}
 
 /* Ensure OrgUnitId is a string everywhere (D2L mixes types). */
 function stringIds(c) { return { ...c, OrgUnitId: String(c.OrgUnitId) }; }
 
 const STATUS = {
   todo:   { label: 'Not yet started', cls: '',           icon: null },
-  draft:  { label: 'Saved as draft',  cls: '',           icon: null },
+  draft:  { label: 'In progress',     cls: '',           icon: null },
   done:   { label: 'Submitted',       cls: 'pill--done', icon: 'check' },
   graded: { label: 'Graded',          cls: 'pill--done', icon: 'check' },
 };
@@ -470,6 +410,19 @@ function renderUpNext(items) {
       openNotesPopover(card);
     });
   });
+
+  // Intercept Up Next card clicks → open the inline detail drawer.
+  // Ctrl/Cmd/Shift/middle-click still go straight to BigSky (escape hatch).
+  grid.querySelectorAll('.task-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+      if (e.target.closest('[data-notes-toggle]')) return; // notes button has its own handler
+      e.preventDefault();
+      const taskId = card.dataset.taskId;
+      const task = (state._upNext || []).find(t => t.id === taskId);
+      if (task) openTaskDrawer(task);
+    });
+  });
 }
 
 function renderCourses(arranged) {
@@ -515,6 +468,31 @@ function renderCourses(arranged) {
       openCourseMenu(btn.dataset.overflow, btn);
     });
   });
+  // Live badge clicks → open the saved link, or the schedule editor if no link
+  grid.querySelectorAll('[data-live-link]').forEach(badge => {
+    badge.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const link = badge.dataset.liveLink;
+      const ouId = badge.dataset.liveOu;
+      if (link) {
+        window.open(link, '_blank', 'noopener');
+      } else {
+        // LIVE but no link set yet — let user paste one in.
+        const tile = badge.closest('.course-tile');
+        const code = tile && tile.dataset.courseCode;
+        openScheduleEditor(ouId, badge, code);
+      }
+    });
+  });
+  // Clickable announcement highlights → open inline modal
+  grid.querySelectorAll('[data-news-id]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openAnnouncementModal(btn.dataset.newsCourse, btn.dataset.newsId);
+    });
+  });
   wireCoursePeek();
 }
 
@@ -530,14 +508,18 @@ function courseTile(c, isPinned, opts = {}) {
     'course-tile',
     isPinned ? 'course-tile--pinned' : '',
     opts.dimmed ? 'course-tile--dimmed' : '',
+    // Preserve the peek-anchor highlight across re-renders triggered by
+    // background bundle refreshes that happen while a peek is open.
+    peekState.openId === String(c.OrgUnitId) ? 'course-tile--peeking' : '',
   ].filter(Boolean).join(' ');
   return `
     <a class="${cls}"
-       href="https://bigsky.benilde.edu.ph/d2l/home/${c.OrgUnitId}"
+       href="${api.BASE}/d2l/home/${c.OrgUnitId}"
        data-course-id="${c.OrgUnitId}"
        data-course-code="${escapeHtml(code)}"
        style="--course-bg: var(--c${ci}-bg); --course-fg: var(--c${ci}-fg);">
       <img class="course-tile-photo" src="${imgUrl}" alt="" loading="lazy">
+      ${liveBadgeHtml(c.OrgUnitId, state.classSchedules)}
       ${isPinned ? `<span class="course-tile-pin-badge" aria-label="Pinned">${ICONS.pin}</span>` : ''}
       <button class="course-tile-overflow" aria-label="Course options" data-overflow="${c.OrgUnitId}">${ICONS.more}</button>
       <div class="course-tile-body">
@@ -546,13 +528,20 @@ function courseTile(c, isPinned, opts = {}) {
         <div class="course-tile-meta tone-${preview.tone}">${preview.label}</div>
         ${highlights.length ? `
           <div class="course-tile-highlights">
-            ${highlights.map(h => `
-              <div class="course-tile-highlight">
-                <span class="course-tile-highlight-icon">${ICONS[h.icon]}</span>
-                <span class="course-tile-highlight-title">${escapeHtml(h.title)}</span>
-                <span class="course-tile-highlight-when">${escapeHtml(h.when)}</span>
-              </div>
-            `).join('')}
+            ${highlights.map(h => {
+              const clickable = h.kind === 'announcement' && h.newsId;
+              const Tag = clickable ? 'button' : 'div';
+              const attrs = clickable
+                ? `type="button" data-news-id="${escapeHtml(String(h.newsId))}" data-news-course="${escapeHtml(String(h.courseId))}"`
+                : '';
+              return `
+                <${Tag} class="course-tile-highlight${clickable ? ' course-tile-highlight--clickable' : ''}" ${attrs}>
+                  <span class="course-tile-highlight-icon">${ICONS[h.icon]}</span>
+                  <span class="course-tile-highlight-title">${escapeHtml(h.title)}</span>
+                  <span class="course-tile-highlight-when">${escapeHtml(h.when)}</span>
+                </${Tag}>
+              `;
+            }).join('')}
           </div>
         ` : ''}
       </div>
@@ -562,16 +551,17 @@ function courseTile(c, isPinned, opts = {}) {
 
 /* Compose up to 2 highlight rows for a course tile.
  * 1. Next unsubmitted assignment due soon (next 21 days)
- * 2. Latest announcement posted in past 14 days */
+ * 2. Latest announcement posted in past 14 days (clickable → inline modal)
+ *
+ * Each highlight may carry an action token: { kind: 'announcement', newsId }
+ * which renderCourses wires up as a click → openAnnouncementModal. */
 function tileHighlights(c) {
   const b = state.bundles[c.OrgUnitId] || {};
   const submitted = new Set((b.submittedFolderIds || []).map(String));
   const out = [];
   const now = Date.now();
-  const aDay = 86_400_000;
 
-  /* Next due unsubmitted assignment within 21 days. Skip ones whose
-   * submission window has already closed (Availability.EndDate in past). */
+  /* Next due unsubmitted assignment within 21 days. Skip closed-window. */
   const folders = (b.dropbox && !b.dropbox.__error) ? b.dropbox : [];
   const upcoming = folders
     .filter(f => f.DueDate && !submitted.has(String(f.Id)))
@@ -579,7 +569,7 @@ function tileHighlights(c) {
       const endDate = f.Availability && f.Availability.EndDate;
       if (endDate && new Date(endDate).getTime() < now) return false;
       const t = new Date(f.DueDate).getTime();
-      return t >= now - aDay && t <= now + 21 * aDay;
+      return t >= now - DAY_MS && t <= now + 21 * DAY_MS;
     })
     .sort((a, b) => new Date(a.DueDate) - new Date(b.DueDate));
   if (upcoming[0]) {
@@ -587,10 +577,11 @@ function tileHighlights(c) {
       icon: 'calendar',
       title: upcoming[0].Name,
       when: shortDue(upcoming[0].DueDate),
+      kind: 'due',
     });
   }
 
-  /* Latest announcement in past 14 days. */
+  /* Latest announcement in past 14 days — clickable. */
   const news = (b.news && !b.news.__error) ? b.news : [];
   const sorted = [...news].sort((a, b) =>
     new Date(b.LastModifiedDate || b.CreatedDate) - new Date(a.LastModifiedDate || a.CreatedDate)
@@ -598,11 +589,14 @@ function tileHighlights(c) {
   const latest = sorted[0];
   if (latest) {
     const t = new Date(latest.LastModifiedDate || latest.CreatedDate).getTime();
-    if (t > now - 14 * aDay) {
+    if (t > now - 14 * DAY_MS) {
       out.push({
         icon: 'megaphone',
         title: latest.Title,
         when: derive.relativeTime(latest.LastModifiedDate || latest.CreatedDate),
+        kind: 'announcement',
+        newsId: latest.Id,
+        courseId: c.OrgUnitId,
       });
     }
   }
@@ -612,7 +606,7 @@ function tileHighlights(c) {
 /* Compact due label for tiles (less verbose than dueLabel used in Up Next). */
 function shortDue(iso) {
   const t = new Date(iso).getTime();
-  const days = Math.round((t - Date.now()) / 86_400_000);
+  const days = Math.round((t - Date.now()) / DAY_MS);
   if (days < 0) return `${Math.abs(days)}d late`;
   if (days === 0) return 'today';
   if (days === 1) return 'tomorrow';
@@ -628,7 +622,7 @@ function tilePreview(c) {
 
   // Unsubmitted assignments due in next 7 days, submission window still open
   const now = Date.now();
-  const horizon = now + 7 * 86_400_000;
+  const horizon = now + 7 * DAY_MS;
   const folders = (b.dropbox && !b.dropbox.__error) ? b.dropbox : [];
   let dueCount = 0;
   for (const f of folders) {
@@ -641,7 +635,7 @@ function tilePreview(c) {
   }
 
   // Announcements posted in past 7 days
-  const week = now - 7 * 86_400_000;
+  const week = now - 7 * DAY_MS;
   const news = (b.news && !b.news.__error) ? b.news : [];
   let newCount = 0;
   for (const n of news) {
@@ -653,7 +647,7 @@ function tilePreview(c) {
     return { label: 'All caught up', tone: 'calm' };
   }
   const parts = [];
-  if (dueCount > 0) parts.push(`${dueCount} ${dueCount === 1 ? 'due' : 'due'}`);
+  if (dueCount > 0) parts.push(`${dueCount} due`);
   if (newCount > 0) parts.push(`${newCount} new`);
   return { label: parts.join(' · '), tone: dueCount > 0 ? 'attention' : 'info' };
 }
@@ -678,7 +672,7 @@ function renderFeed(items) {
           <div class="feed-body">${body}</div>
           <span class="feed-time">${escapeHtml(derive.relativeTime(it.when))}</span>
         </button>
-        ${expandable ? renderFeedExpanded(it) : ''}
+        ${expandable ? `<div class="feed-expanded-wrap">${renderFeedExpanded(it)}</div>` : ''}
       </li>
     `;
   }).join('');
@@ -705,7 +699,7 @@ function renderFeedExpanded(it) {
           <span>${escapeHtml(a.FileName || a.Name || 'attachment')}</span>
         </a>`).join('')}</div>`
     : '';
-  const openHref = `https://bigsky.benilde.edu.ph/d2l/lms/news/main.d2l?ou=${it.courseId}`;
+  const openHref = `${api.BASE}/d2l/lms/news/main.d2l?ou=${it.courseId}`;
   return `
     <div class="feed-expanded">
       <h3 class="feed-expanded-title">${escapeHtml(it.title)}</h3>
@@ -720,60 +714,158 @@ function renderFeedExpanded(it) {
   `;
 }
 
-/* Minimal sanitizer — strip script/style/iframe/object. D2L announcements
- * are author-controlled by instructors (whom you trust as students), so we
- * keep most HTML. Belt + suspenders: scrub the dangerous tags + event attrs. */
-function sanitizeAnnouncementHtml(html) {
-  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
-  const root = doc.body.firstElementChild;
-  root.querySelectorAll('script, style, iframe, object, embed').forEach(n => n.remove());
-  root.querySelectorAll('*').forEach(el => {
-    for (const attr of [...el.attributes]) {
-      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
-      if (attr.name === 'href' && /^javascript:/i.test(attr.value)) el.setAttribute('href', '#');
-    }
-  });
-  return root.innerHTML;
-}
-
 /* ---- helpers ---- */
 
 function daysUntil(iso) {
-  return Math.round((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  return Math.round((new Date(iso).getTime() - Date.now()) / DAY_MS);
 }
 
-
-function escapeHtml(s) {
-  return String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
-}
-
-function showError(msg) {
-  let el = $('#smallsky-error');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'smallsky-error';
-    el.className = 'error-toast';
-    document.body.appendChild(el);
-  }
-  el.textContent = msg;
-  el.classList.add('visible');
-}
-function hideError() { $('#smallsky-error')?.classList.remove('visible'); }
-
-/* ---- theme (light/dark with circle-reveal animation) ---- */
+/* ---- theme + palette ----
+ * data-theme on <html> = palette name (default | ocean | lavender | rose |
+ *                                       mocha | benilde | slate | plain)
+ * data-mode  on <html> = "light" | "dark"
+ *
+ * Both attributes are set first by theme-init.js (synchronously, before any
+ * paint) and re-applied here as a safety net. initTheme() is now a no-op
+ * for the page paint — its only job is to keep the cog icon in sync. */
 
 function initTheme() {
-  const saved = localStorage.getItem('smallsky-theme');
-  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const valid = saved === 'light' || saved === 'dark';
-  document.documentElement.dataset.theme = valid ? saved : (prefersDark ? 'dark' : 'light');
+  // theme-init.js has already applied attributes; this is a defensive backstop
+  // in case the script failed to run (e.g. blocked by CSP in a future tweak).
+  const root = document.documentElement;
+  if (!root.dataset.mode) {
+    const saved = localStorage.getItem('smallsky-mode');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const valid = saved === 'light' || saved === 'dark';
+    root.dataset.mode = valid ? saved : (prefersDark ? 'dark' : 'light');
+  }
+  if (!root.dataset.theme || VALID_PALETTES.indexOf(root.dataset.theme) < 0) {
+    const savedPalette = localStorage.getItem('smallsky-theme');
+    root.dataset.theme = VALID_PALETTES.indexOf(savedPalette) >= 0 ? savedPalette : 'default';
+  }
+}
+
+/* Apply a palette change with a liquid-wave wipe animation.
+ *
+ * Two distinct page-level transitions in this app:
+ *   - Light/dark toggle = identity shift → circle-reveal from the sun/moon button
+ *   - Palette swap = hue change → liquid wave sweeping diagonally
+ *
+ * The wave is built from a polygon with many points along the leading edge.
+ * Each keyframe shifts both the wave's POSITION (left → right across the
+ * screen) AND its PHASE (so the wave shape itself morphs as it travels —
+ * the difference between a static curve sliding sideways and a living
+ * wave undulating across the page). Three intermediate phase shifts during
+ * a 1200ms travel produce a gentle, organic "water washing over paper" feel.
+ *
+ * Easing is sine-symmetric (ease-in-out-sine) to match the sinusoidal shape
+ * — the curve and its motion share a single mathematical identity. */
+const PALETTE_WAVE = {
+  slantWidth: 90,    // diagonal slant amount (% of viewport width)
+  amplitude: 2.8,    // wave bulge amount (%)
+  wavelength: 1.4,   // number of wave cycles along the edge
+  segments: 18,      // polygon points along the leading edge (smoother = more)
+};
+
+/* The polygon's x-range needs to extend FAR enough on both ends so that at
+ * progress=0 the entire leading edge is off-screen-left, and at progress=1
+ * the entire trailing edge is off-screen-right — including allowance for the
+ * wave's bulge (amplitude) and a small safety margin. Without this, the
+ * bottom-right corner stays uncovered at progress=1 and snaps to the new
+ * theme when the View Transition ends, producing the visible ~80% snap. */
+const PALETTE_WAVE_MARGIN = PALETTE_WAVE.amplitude + 5;
+const PALETTE_WAVE_START_X = -PALETTE_WAVE.slantWidth - PALETTE_WAVE_MARGIN;
+const PALETTE_WAVE_END_X   = 100 + PALETTE_WAVE.slantWidth + PALETTE_WAVE_MARGIN;
+
+function wavePolygon(progress, phase) {
+  const x = PALETTE_WAVE_START_X + progress * (PALETTE_WAVE_END_X - PALETTE_WAVE_START_X);
+  const points = ['0% 0%', `${x.toFixed(2)}% 0%`];
+  for (let i = 1; i < PALETTE_WAVE.segments; i++) {
+    const t = i / PALETTE_WAVE.segments;
+    const baseX = x - PALETTE_WAVE.slantWidth * t;
+    const wave = Math.sin((t * PALETTE_WAVE.wavelength + phase) * Math.PI * 2) * PALETTE_WAVE.amplitude;
+    points.push(`${(baseX + wave).toFixed(2)}% ${(t * 100).toFixed(2)}%`);
+  }
+  points.push(`${(x - PALETTE_WAVE.slantWidth).toFixed(2)}% 100%`, '0% 100%');
+  return `polygon(${points.join(', ')})`;
+}
+
+/* Inject the palette-wave keyframes once.
+ *
+ * Why CSS keyframes (vs programmatic element.animate)? The View Transitions
+ * API only reliably waits for CSS animations on the pseudo-elements — JS
+ * animations can be cut short when the browser decides the transition is
+ * "done," producing a ~70%-through snap-to-end.
+ *
+ * Why bake the easing into keyframe POSITIONS? With CSS `animation-timing-
+ * function`, the easing curve restarts between every consecutive keyframe.
+ * With 4 keyframes that means triple-restart stutter (slow-fast-slow-fast-
+ * slow-fast-slow). Instead, we generate ~36 keyframes whose progress values
+ * follow a sine-based ease curve, then set `animation-timing-function:
+ * linear` — the linear interpolation between closely-spaced eased samples
+ * produces buttery-smooth motion with no acceleration glitches. */
+const PALETTE_WAVE_SAMPLES = 36;
+function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+function lerp(a, b, t)    { return a + (b - a) * t; }
+
+let _paletteKeyframesInstalled = false;
+function installPaletteKeyframes() {
+  if (_paletteKeyframesInstalled) return;
+  _paletteKeyframesInstalled = true;
+
+  const lines = [];
+  for (let i = 0; i <= PALETTE_WAVE_SAMPLES; i++) {
+    const timePct = (i / PALETTE_WAVE_SAMPLES * 100).toFixed(3);
+    const eased = easeInOutSine(i / PALETTE_WAVE_SAMPLES);
+    // Wave phase shifts gently with progress — gives the wave its undulation.
+    const phase = eased * 1.8;
+    const clip = wavePolygon(eased, phase);
+    // Soft trailing shadow on the clipped edge. Kept modest (max 12px blur)
+    // because drop-shadow on a fullscreen pseudo is expensive — 22px blur
+    // produced visible frame drops on mid-range hardware.
+    const sx = lerp(-8, -1, eased).toFixed(1);
+    const sb = lerp(12, 3, eased).toFixed(1);
+    const sa = lerp(0.16, 0.02, eased).toFixed(3);
+    const filter = `drop-shadow(${sx}px 0 ${sb}px rgba(0, 0, 0, ${sa}))`;
+    lines.push(`  ${timePct}% { clip-path: ${clip}; filter: ${filter}; }`);
+  }
+
+  const style = document.createElement('style');
+  style.id = 'smallsky-palette-wave-keyframes';
+  style.textContent = `
+@keyframes smallsky-palette-wave {
+${lines.join('\n')}
+}
+.palette-swapping::view-transition-new(root) {
+  animation: smallsky-palette-wave 1200ms linear forwards;
+}
+  `;
+  document.head.appendChild(style);
+}
+
+function setPalette(name) {
+  if (VALID_PALETTES.indexOf(name) < 0) return;
+
+  const apply = () => {
+    document.documentElement.dataset.theme = name;
+    localStorage.setItem('smallsky-theme', name);
+  };
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!document.startViewTransition || reduceMotion) { apply(); return; }
+
+  installPaletteKeyframes();
+  const root = document.documentElement;
+  root.classList.add('palette-swapping');
+  const transition = document.startViewTransition(apply);
+  transition.finished.finally(() => root.classList.remove('palette-swapping'));
 }
 
 async function toggleTheme(event) {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  const next = document.documentElement.dataset.mode === 'dark' ? 'light' : 'dark';
   const apply = () => {
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('smallsky-theme', next);
+    document.documentElement.dataset.mode = next;
+    localStorage.setItem('smallsky-mode', next);
     refreshThemeIcon();
   };
 
@@ -849,10 +941,34 @@ async function toggleSettings(anchor) {
       </div>
       <div class="settings-row">
         <div>
+          <div class="settings-row-title">Old course data</div>
+          <div class="settings-row-sub">Schedules and photos from courses no longer in your list.</div>
+        </div>
+        <button class="settings-action" data-settings-action="cleanup-orphans">Scan</button>
+      </div>
+      <div class="settings-row">
+        <div>
           <div class="settings-row-title">Updates</div>
           <div class="settings-row-sub">SmallSky checks daily. Pull right now if you want.</div>
         </div>
         <button class="settings-action" data-settings-action="check-update">Check now</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h3 class="settings-section-label">Theme</h3>
+      <div class="theme-swatches" role="radiogroup" aria-label="Color theme">
+        ${PALETTES.map(p => {
+          const active = document.documentElement.dataset.theme === p.id;
+          return `
+            <button class="theme-swatch${active ? ' is-active' : ''}"
+                    type="button" role="radio" aria-checked="${active}"
+                    data-palette="${p.id}" title="${escapeHtml(p.name)}">
+              <span class="theme-swatch-dot" style="--swatch-bg:${p.bg};--swatch-accent:${p.accent};"></span>
+              <span class="theme-swatch-label">${escapeHtml(p.name)}</span>
+            </button>
+          `;
+        }).join('')}
       </div>
     </section>
 
@@ -906,7 +1022,7 @@ async function toggleSettings(anchor) {
     </section>
   `;
   pop.hidden = false;
-  positionSettings(pop, anchor);
+  positionAnchored(pop, anchor, { width: 360, gap: 8, margin: 12 });
   requestAnimationFrame(() => pop.classList.add('visible'));
   settingsOpen = true;
 }
@@ -918,29 +1034,30 @@ function closeSettings() {
   settingsOpen = false;
 }
 
-function positionSettings(pop, anchor) {
-  const r = anchor.getBoundingClientRect();
-  const width = 360;
-  pop.style.width = width + 'px';
-  let left = r.right + window.scrollX - width;
-  if (left < 12) left = 12;
-  pop.style.left = left + 'px';
-  pop.style.top = (r.bottom + window.scrollY + 8) + 'px';
-}
-
 function wireGlobalSettingsHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && settingsOpen) closeSettings(); });
-  document.addEventListener('click', (e) => {
-    if (!settingsOpen) return;
-    if (e.target.closest('#settings-popover')) return;
-    if (e.target.closest('[data-action="settings"]')) return;
-    closeSettings();
+  bindDismissable({
+    isOpen: () => settingsOpen,
+    close: closeSettings,
+    ignoreSelectors: ['#settings-popover', '[data-action="settings"]'],
   });
   $('#settings-popover').addEventListener('click', async (e) => {
     if (e.target.closest('[data-settings-close]')) { closeSettings(); return; }
     if (e.target.closest('[data-update-action="show"]')) {
       closeSettings();
       openUpdateModal();
+      return;
+    }
+    const swatch = e.target.closest('[data-palette]');
+    if (swatch) {
+      setPalette(swatch.dataset.palette);
+      // Update the active state without rerendering the whole popover —
+      // CSS variables already swapped, this just shifts the ring.
+      const group = swatch.parentElement;
+      group.querySelectorAll('.theme-swatch').forEach(s => {
+        const isActive = s === swatch;
+        s.classList.toggle('is-active', isActive);
+        s.setAttribute('aria-checked', String(isActive));
+      });
       return;
     }
     const action = e.target.closest('[data-settings-action]')?.dataset.settingsAction;
@@ -955,6 +1072,28 @@ function wireGlobalSettingsHandlers() {
       await store.cacheClear();
       showToast('Cache cleared. Reloading…');
       setTimeout(() => location.reload(), 600);
+    } else if (action === 'cleanup-orphans') {
+      const orphans = derive.findOrphanedCourseData(state.courses, state.classSchedules, state.photos);
+      const total = orphans.schedules.length + orphans.photos.length;
+      if (total === 0) {
+        showToast('Nothing to clean up — all your data is for active courses.');
+        return;
+      }
+      const parts = [];
+      if (orphans.schedules.length) parts.push(`${orphans.schedules.length} class schedule${orphans.schedules.length === 1 ? '' : 's'}`);
+      if (orphans.photos.length)    parts.push(`${orphans.photos.length} custom photo${orphans.photos.length === 1 ? '' : 's'}`);
+      const summary = parts.join(' and ');
+      if (!confirm(`Remove ${summary} from courses no longer in your list? This can't be undone.`)) return;
+
+      for (const ouId of orphans.schedules) {
+        state.classSchedules = await store.setClassSchedule(ouId, null);
+      }
+      for (const ouId of orphans.photos) {
+        state.photos = await store.setCoursePhoto(ouId, null);
+      }
+      showToast(`Cleaned up ${summary}.`);
+      closeSettings();
+      render();
     } else if (action === 'check-update') {
       const btn = e.target.closest('button');
       btn.textContent = 'Checking…';
@@ -1002,7 +1141,7 @@ function updateBellBadge() {
 }
 
 function recentAnnouncements() {
-  const cutoff = Date.now() - 14 * 86_400_000;
+  const cutoff = Date.now() - 14 * DAY_MS;
   const out = [];
   for (const c of state.courses) {
     const b = state.bundles[c.OrgUnitId] || {};
@@ -1028,6 +1167,11 @@ function toggleBell(anchor) {
   if (bellOpen) { closeBell(); return; }
   closeProfileMenu();
   closeSettings();
+  // Ring animation on the bell (mirrors the cog spin on settings).
+  const bell = $('[data-action="bell"]');
+  bell.classList.remove('bell-ringing');
+  void bell.offsetWidth; // force reflow so animation restarts on rapid re-clicks
+  bell.classList.add('bell-ringing');
   const items = recentAnnouncements();
   const pop = $('#bell-popover');
   pop.innerHTML = `
@@ -1041,7 +1185,7 @@ function toggleBell(anchor) {
         : items.slice(0, 12).map(it => {
             const ci = derive.colorIndex(it.courseCode);
             return `
-              <a class="bell-item${it._read ? ' is-read' : ''}" href="https://bigsky.benilde.edu.ph/d2l/lms/news/main.d2l?ou=${it.courseId}" target="_blank" rel="noopener">
+              <a class="bell-item${it._read ? ' is-read' : ''}" href="${api.BASE}/d2l/lms/news/main.d2l?ou=${it.courseId}" target="_blank" rel="noopener">
                 <span class="bell-item-icon chip-c${ci}">${ICONS.megaphone}</span>
                 <div class="bell-item-body">
                   <div class="bell-item-title">${escapeHtml(it.title)}</div>
@@ -1056,7 +1200,7 @@ function toggleBell(anchor) {
     </div>
   `;
   pop.hidden = false;
-  positionBell(pop, anchor);
+  positionAnchored(pop, anchor, { width: 360, gap: 6, margin: 12 });
   requestAnimationFrame(() => pop.classList.add('visible'));
   bellOpen = true;
 }
@@ -1066,16 +1210,6 @@ function closeBell() {
   pop.classList.remove('visible');
   setTimeout(() => { if (!bellOpen) pop.hidden = true; }, 160);
   bellOpen = false;
-}
-
-function positionBell(pop, anchor) {
-  const r = anchor.getBoundingClientRect();
-  const width = 360;
-  pop.style.width = width + 'px';
-  let left = r.right + window.scrollX - width;
-  if (left < 12) left = 12;
-  pop.style.left = left + 'px';
-  pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
 }
 
 async function markAllAnnouncementsRead() {
@@ -1090,12 +1224,10 @@ async function markAllAnnouncementsRead() {
 }
 
 function wireGlobalBellHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && bellOpen) closeBell(); });
-  document.addEventListener('click', (e) => {
-    if (!bellOpen) return;
-    if (e.target.closest('#bell-popover')) return;
-    if (e.target.closest('[data-action="bell"]')) return;
-    closeBell();
+  bindDismissable({
+    isOpen: () => bellOpen,
+    close: closeBell,
+    ignoreSelectors: ['#bell-popover', '[data-action="bell"]'],
   });
   $('#bell-popover').addEventListener('click', (e) => {
     if (e.target.closest('[data-bell-mark-all]')) {
@@ -1118,21 +1250,40 @@ function toggleProfileMenu(anchor) {
   const initials = ((me.FirstName||'')[0] || '') + ((me.LastName||'')[0] || '');
 
   const menu = $('#profile-menu');
+  const hasAvatar = !!state.avatar;
+  const avatarInner = hasAvatar
+    ? `<img class="profile-menu-avatar-img" src="${escapeHtml(state.avatar)}" alt="">`
+    : escapeHtml(initials.toUpperCase() || '·');
   menu.innerHTML = `
     <div class="profile-menu-head">
-      <div class="profile-menu-avatar">${escapeHtml(initials.toUpperCase() || '·')}</div>
+      <div class="profile-menu-avatar">${avatarInner}</div>
       <div class="profile-menu-id-block">
         <div class="profile-menu-name">${escapeHtml(fullName)}</div>
         ${id ? `<div class="profile-menu-id">${escapeHtml(id)}</div>` : ''}
       </div>
     </div>
     <div class="profile-menu-divider"></div>
-    <a class="profile-menu-link" href="https://bigsky.benilde.edu.ph/d2l/lp/profile/profile_edit.d2l?ou=6606" target="_blank" rel="noopener">Profile</a>
+    <button type="button" class="profile-menu-link" data-profile-action="upload-avatar">
+      ${hasAvatar ? 'Change photo' : 'Upload photo'}
+    </button>
+    ${hasAvatar ? `
+      <button type="button" class="profile-menu-link" data-profile-action="remove-avatar">
+        Remove photo
+      </button>
+    ` : ''}
     <div class="profile-menu-divider"></div>
-    <a class="profile-menu-link profile-menu-link--danger" href="https://bigsky.benilde.edu.ph/d2l/logout">Log out of BigSky</a>
+    <a class="profile-menu-link" href="${api.BASE}/d2l/lp/profile/profile_edit.d2l?ou=${CSB_ROOT_OU}" target="_blank" rel="noopener">BigSky profile</a>
+    <div class="profile-menu-divider"></div>
+    <a class="profile-menu-link profile-menu-link--danger" href="${api.BASE}/d2l/logout">Log out of BigSky</a>
   `;
+
+  // Wire the avatar actions.
+  menu.querySelector('[data-profile-action="upload-avatar"]')
+    .addEventListener('click', () => { closeProfileMenu(); triggerAvatarUpload(); });
+  const removeBtn = menu.querySelector('[data-profile-action="remove-avatar"]');
+  if (removeBtn) removeBtn.addEventListener('click', () => { closeProfileMenu(); removeAvatar(); });
   menu.hidden = false;
-  positionProfileMenu(menu, anchor);
+  positionAnchored(menu, anchor, { width: 280, gap: 6, margin: 12 });
   requestAnimationFrame(() => menu.classList.add('visible'));
   profileMenuOpen = true;
 }
@@ -1142,16 +1293,6 @@ function closeProfileMenu() {
   menu.classList.remove('visible');
   setTimeout(() => { if (!profileMenuOpen) menu.hidden = true; }, 160);
   profileMenuOpen = false;
-}
-
-function positionProfileMenu(menu, anchor) {
-  const r = anchor.getBoundingClientRect();
-  const width = 280;
-  menu.style.width = width + 'px';
-  let left = r.right + window.scrollX - width;
-  if (left < 12) left = 12;
-  menu.style.left = left + 'px';
-  menu.style.top = (r.bottom + window.scrollY + 6) + 'px';
 }
 
 /* ---- logged-out auth screen ---- */
@@ -1194,7 +1335,7 @@ function openNotesPopover(card) {
   `;
   pop.dataset.taskId = taskId;
   pop.hidden = false;
-  positionNotes(pop, card);
+  positionAnchored(pop, card, { minWidth: 280, gap: 6, align: 'left', margin: 12 });
   requestAnimationFrame(() => {
     pop.classList.add('visible');
     pop.querySelector('textarea').focus();
@@ -1223,24 +1364,11 @@ function closeNotesPopover() {
   notesState.anchor = null;
 }
 
-function positionNotes(pop, anchor) {
-  const r = anchor.getBoundingClientRect();
-  const width = Math.max(r.width, 280);
-  pop.style.width = width + 'px';
-  let left = r.left + window.scrollX;
-  if (left + width > window.innerWidth - 12) left = window.innerWidth - width - 12;
-  if (left < 12) left = 12;
-  pop.style.left = left + 'px';
-  pop.style.top = (r.bottom + window.scrollY + 6) + 'px';
-}
-
 function wireGlobalNotesHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && notesState.openTaskId) closeNotesPopover(); });
-  document.addEventListener('click', (e) => {
-    if (!notesState.openTaskId) return;
-    if (e.target.closest('#notes-popover')) return;
-    if (e.target.closest('[data-notes-toggle]')) return;
-    closeNotesPopover();
+  bindDismissable({
+    isOpen: () => !!notesState.openTaskId,
+    close: closeNotesPopover,
+    ignoreSelectors: ['#notes-popover', '[data-notes-toggle]'],
   });
   $('#notes-popover').addEventListener('click', (e) => {
     if (e.target.closest('[data-notes-close]')) { e.preventDefault(); closeNotesPopover(); }
@@ -1258,16 +1386,18 @@ function openCourseMenu(ouId, anchor) {
   const isHidden = state.prefs.hidden.includes(ouId);
   const hasCustom = !!state.photos[ouId];
   const menu = $('#course-menu');
+  const hasSchedule = !!state.classSchedules[ouId];
   menu.innerHTML = `
     <button data-menu-action="pin">${ICONS.pin}<span>${isPinned ? 'Unpin' : 'Pin to top'}</span></button>
     <button data-menu-action="hide">${ICONS.hide}<span>${isHidden ? 'Show again' : 'Hide course'}</span></button>
     <div class="course-menu-divider"></div>
+    <button data-menu-action="schedule">${ICONS.calendar}<span>${hasSchedule ? 'Edit class schedule' : 'Add class schedule'}</span></button>
     <button data-menu-action="photo">${ICONS.file}<span>${hasCustom ? 'Change photo…' : 'Set custom photo…'}</span></button>
     ${hasCustom ? `<button data-menu-action="resetPhoto">${ICONS.close}<span>Reset photo</span></button>` : ''}
   `;
   menu.dataset.ouId = ouId;
   menu.hidden = false;
-  positionMenu(menu, anchor);
+  positionAnchored(menu, anchor, { width: 200, gap: 6, margin: 8 });
   requestAnimationFrame(() => menu.classList.add('visible'));
   menuState.openOuId = ouId;
 }
@@ -1279,24 +1409,11 @@ function closeCourseMenu() {
   menuState.openOuId = null;
 }
 
-function positionMenu(menu, anchor) {
-  const r = anchor.getBoundingClientRect();
-  const width = 200;
-  menu.style.width = width + 'px';
-  let left = r.right + window.scrollX - width;
-  if (left < 8) left = 8;
-  if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
-  menu.style.left = left + 'px';
-  menu.style.top = (r.bottom + window.scrollY + 6) + 'px';
-}
-
 function wireGlobalMenuHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && menuState.openOuId) closeCourseMenu(); });
-  document.addEventListener('click', (e) => {
-    if (!menuState.openOuId) return;
-    if (e.target.closest('#course-menu')) return;
-    if (e.target.closest('[data-overflow]')) return;
-    closeCourseMenu();
+  bindDismissable({
+    isOpen: () => !!menuState.openOuId,
+    close: closeCourseMenu,
+    ignoreSelectors: ['#course-menu', '[data-overflow]'],
   });
   $('#course-menu').addEventListener('click', async (e) => {
     const action = e.target.closest('[data-menu-action]')?.dataset.menuAction;
@@ -1305,6 +1422,12 @@ function wireGlobalMenuHandlers() {
     closeCourseMenu();
     if (action === 'pin')          { state.prefs = await store.togglePin(ouId); render(); }
     else if (action === 'hide')    { state.prefs = await store.toggleHidden(ouId); render(); }
+    else if (action === 'schedule') {
+      // Re-find tile after menu close so the editor anchors to the live element.
+      const tile = document.querySelector(`.course-tile[data-course-id="${CSS.escape(ouId)}"]`);
+      const code = tile && tile.dataset.courseCode;
+      openScheduleEditor(ouId, tile, code);
+    }
     else if (action === 'photo')   { triggerPhotoUpload(ouId); }
     else if (action === 'resetPhoto') {
       state.photos = await store.setCoursePhoto(ouId, null);
@@ -1314,88 +1437,24 @@ function wireGlobalMenuHandlers() {
   });
 }
 
-/* ---- custom course photo upload ---- */
-
-const photoState = { pendingOuId: null };
-
-function triggerPhotoUpload(ouId) {
-  photoState.pendingOuId = ouId;
-  $('#photo-upload').value = '';   // allow re-selecting same file
-  $('#photo-upload').click();
-}
-
-async function handlePhotoUpload(file) {
-  const ouId = photoState.pendingOuId;
-  photoState.pendingOuId = null;
-  if (!ouId || !file) return;
-  if (!/^image\//.test(file.type)) {
-    showToast('That doesn\'t look like an image.');
-    return;
-  }
-  showToast('Processing photo…');
-  try {
-    const dataUrl = await processCoursePhoto(file);
-    state.photos = await store.setCoursePhoto(ouId, dataUrl);
-    render();
-    showToast('Photo updated.');
-  } catch (e) {
-    showToast(`Couldn't process that image: ${e.message}`);
-  }
-}
-
-/* Crop to the same 64:27 (≈540×230) banner aspect as D2L's default course
- * images, then scale to 640×270 and encode as 85%-quality JPEG so storage
- * stays small (~30-60 KB per photo). */
-async function processCoursePhoto(file, targetW = 640, targetH = 270) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error('image failed to decode'));
-      i.src = url;
-    });
-    const targetRatio = targetW / targetH;
-    const srcRatio = img.width / img.height;
-    let sx, sy, sw, sh;
-    if (srcRatio > targetRatio) {
-      sh = img.height;
-      sw = img.height * targetRatio;
-      sx = (img.width - sw) / 2;
-      sy = 0;
-    } else {
-      sw = img.width;
-      sh = img.width / targetRatio;
-      sx = 0;
-      sy = (img.height - sh) / 2;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
-    return canvas.toDataURL('image/jpeg', 0.85);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function showToast(msg, ms = 2500) {
-  const t = $('#smallsky-toast');
-  t.textContent = msg;
-  t.hidden = false;
-  requestAnimationFrame(() => t.classList.add('visible'));
-  clearTimeout(showToast._timer);
-  showToast._timer = setTimeout(() => {
-    t.classList.remove('visible');
-    setTimeout(() => { t.hidden = true; }, 200);
-  }, ms);
-}
-
 /* ---- course quick-peek popover (click-triggered) ---- */
 
-const peekState = { openId: null, openTile: null };
+const peekState = { openId: null };
+const PEEK_OPTS = { width: 320, gap: 8, align: 'left', margin: 12, flip: true };
+
+/* Look up the live tile element by courseId. Required because background
+ * bundle refreshes call render() which rebuilds the grid via innerHTML —
+ * the original tile reference passed into showPeek becomes detached, and a
+ * detached element's getBoundingClientRect() returns all zeroes (which made
+ * the peek fly to top-left). Re-finding the tile each time anchors correctly. */
+function findCourseTile(courseId) {
+  return document.querySelector(`.course-tile[data-course-id="${CSS.escape(String(courseId))}"]`);
+}
+function repositionPeek() {
+  if (!peekState.openId) return;
+  const tile = findCourseTile(peekState.openId);
+  if (tile) positionAnchored($('#course-peek'), tile, PEEK_OPTS);
+}
 
 function wireCoursePeek() {
   document.querySelectorAll('.course-tile').forEach(tile => {
@@ -1405,6 +1464,9 @@ function wireCoursePeek() {
       // Overflow button has its own handler — don't conflict.
       if (e.target.closest('[data-overflow]')) return;
       e.preventDefault();
+      // Blur after handling so the :focus-visible accent ring doesn't linger
+      // (Chrome can leave focus-visible on after click+preventDefault on <a>).
+      tile.blur();
       const courseId = tile.dataset.courseId;
       if (peekState.openId === courseId) hidePeek();
       else showPeek(tile);
@@ -1414,22 +1476,34 @@ function wireCoursePeek() {
 
 /* Wire global close handlers ONCE on boot, not per-render. */
 function wireGlobalPeekHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hidePeek(); });
-  document.addEventListener('click', (e) => {
-    if (!peekState.openId) return;
-    if (e.target.closest('#course-peek')) return;
-    if (e.target.closest('.course-tile')) return; // handled by tile click
-    hidePeek();
+  bindDismissable({
+    isOpen: () => !!peekState.openId,
+    close: hidePeek,
+    ignoreSelectors: ['#course-peek', '.course-tile'], // tile clicks handled by tile itself
   });
-  // Close button inside the peek (delegated since the peek innerHTML re-renders).
+  // Close button + announcement clicks (delegated since the peek innerHTML re-renders).
   $('#course-peek').addEventListener('click', (e) => {
-    if (e.target.closest('[data-peek-close]')) { e.preventDefault(); hidePeek(); }
+    if (e.target.closest('[data-peek-close]')) {
+      e.preventDefault();
+      hidePeek();
+      return;
+    }
+    const newsBtn = e.target.closest('[data-peek-news]');
+    if (newsBtn) {
+      e.preventDefault();
+      const courseId = newsBtn.dataset.newsCourse;
+      const newsId = newsBtn.dataset.newsId;
+      hidePeek();
+      // Wait for peek's close animation to start before opening the modal —
+      // simultaneous animations feel jumbled.
+      setTimeout(() => openAnnouncementModal(courseId, newsId), 140);
+    }
   });
   // Only reposition on resize. Don't reposition on scroll — the peek is
   // position:absolute so it scrolls with the page naturally; recomputing on
   // every scroll event was clamping it to the top of the viewport when the
   // anchor tile scrolled out of view.
-  window.addEventListener('resize', () => { if (peekState.openTile) positionPeek($('#course-peek'), peekState.openTile.getBoundingClientRect()); });
+  window.addEventListener('resize', repositionPeek);
 }
 
 async function showPeek(tile) {
@@ -1439,18 +1513,16 @@ async function showPeek(tile) {
   if (!courseId) return;
   const peek = $('#course-peek');
 
-  // Visually mark which tile is being peeked.
+  // The peeking class on the tile is applied via the courseTile() template
+  // off peekState.openId, so it survives render() rebuilds. Just set state.
+  peekState.openId = courseId;
+  // Re-render any visible tiles so the current one picks up the class.
   document.querySelectorAll('.course-tile--peeking').forEach(t => t.classList.remove('course-tile--peeking'));
   tile.classList.add('course-tile--peeking');
 
-  peekState.openId = courseId;
-  peekState.openTile = tile;
-
-  // Position: prefer below + same-left-edge. Flip up if no room.
-  const r = tile.getBoundingClientRect();
   peek.hidden = false;
   peek.innerHTML = peekShell(code, courseId, 'loading');
-  positionPeek(peek, r);
+  positionAnchored(peek, tile, PEEK_OPTS);
   peek.classList.add('visible');
 
   // Fire-and-forget: silently refresh this course's bundle in the background.
@@ -1459,17 +1531,19 @@ async function showPeek(tile) {
     .then(b => { state.bundles[courseId] = b; render(); })
     .catch(() => {});
 
-  // Fetch TOC + recent announcements (with cache).
+  // Fetch TOC + recent announcements (with cache). Re-position via the helper
+  // so we look up the *current* tile element (the original may have been
+  // detached by a render() between now and the await resolving).
   try {
     const toc = await getTOCCached(courseId);
     if (peekState.openId !== courseId) return; // user moved on
     const news = state.bundles[courseId]?.news || [];
     peek.innerHTML = peekShell(code, courseId, 'ready', { toc, news });
-    positionPeek(peek, r);
+    repositionPeek();
   } catch (e) {
     if (peekState.openId !== courseId) return;
     peek.innerHTML = peekShell(code, courseId, 'error');
-    positionPeek(peek, r);
+    repositionPeek();
   }
 }
 
@@ -1479,28 +1553,6 @@ function hidePeek() {
   setTimeout(() => { if (!peek.classList.contains('visible')) { peek.hidden = true; } }, 180);
   document.querySelectorAll('.course-tile--peeking').forEach(t => t.classList.remove('course-tile--peeking'));
   peekState.openId = null;
-  peekState.openTile = null;
-}
-
-function positionPeek(peek, tileRect) {
-  // Pop up below tile by default. If too close to bottom of viewport, place above.
-  const desiredWidth = 320;
-  peek.style.width = desiredWidth + 'px';
-  const margin = 8;
-  let left = tileRect.left + window.scrollX;
-  if (left + desiredWidth > window.innerWidth - 12) left = window.innerWidth - desiredWidth - 12;
-  if (left < 12) left = 12;
-  let top;
-  const spaceBelow = window.innerHeight - tileRect.bottom;
-  const spaceAbove = tileRect.top;
-  const peekHeight = peek.offsetHeight || 320;
-  if (spaceBelow > peekHeight + 20 || spaceBelow > spaceAbove) {
-    top = tileRect.bottom + window.scrollY + margin;
-  } else {
-    top = tileRect.top + window.scrollY - peekHeight - margin;
-  }
-  peek.style.left = left + 'px';
-  peek.style.top = Math.max(8, top) + 'px';
 }
 
 function peekShell(code, courseId, status, data) {
@@ -1510,7 +1562,7 @@ function peekShell(code, courseId, status, data) {
   } else if (status === 'error') {
     body = `<div class="peek-error">Couldn’t load course details.</div>`;
   } else {
-    body = `${peekTOC(data.toc, courseId)}${peekNews(data.news)}`;
+    body = `${peekTOC(data.toc, courseId)}${peekNews(data.news, courseId)}`;
   }
   return `
     <div class="peek-head">
@@ -1519,7 +1571,7 @@ function peekShell(code, courseId, status, data) {
     </div>
     <div class="peek-body">${body}</div>
     <div class="peek-foot">
-      <a class="peek-link" href="https://bigsky.benilde.edu.ph/d2l/le/content/${courseId}/Home" target="_blank" rel="noopener">
+      <a class="peek-link" href="${api.BASE}/d2l/le/content/${courseId}/Home" target="_blank" rel="noopener">
         Open content ${ICONS.externalLink}
       </a>
     </div>
@@ -1533,7 +1585,7 @@ function peekTOC(toc, courseId) {
   }
   const rows = modules.slice(0, 14).map(m => {
     const itemCount = (m.Modules?.length || 0) + (m.Topics?.length || 0);
-    const href = `https://bigsky.benilde.edu.ph/d2l/le/content/${courseId}/Home?moduleId=${m.ModuleId || m.Id}`;
+    const href = `${api.BASE}/d2l/le/content/${courseId}/Home?moduleId=${m.ModuleId || m.Id}`;
     return `
       <a class="peek-module" href="${href}" target="_blank" rel="noopener">
         <span class="peek-module-icon">${ICONS.module}</span>
@@ -1550,20 +1602,23 @@ function peekTOC(toc, courseId) {
   `;
 }
 
-function peekNews(news) {
+function peekNews(news, courseId) {
   const items = (news || []).slice(0, 3);
   if (!items.length) return '';
   return `
     <div class="peek-section">
       <div class="peek-section-label">Recent announcements</div>
-      <ol class="peek-news">
+      <div class="peek-news">
         ${items.map(n => `
-          <li class="peek-news-item">
+          <button type="button" class="peek-news-item"
+                  data-peek-news
+                  data-news-id="${escapeHtml(String(n.Id))}"
+                  data-news-course="${escapeHtml(String(courseId))}">
             <span class="peek-news-title">${escapeHtml(n.Title)}</span>
             <span class="peek-news-time">${escapeHtml(derive.relativeTime(n.LastModifiedDate || n.CreatedDate))}</span>
-          </li>
+          </button>
         `).join('')}
-      </ol>
+      </div>
     </div>
   `;
 }
@@ -1577,238 +1632,8 @@ async function getTOCCached(courseId) {
   return toc;
 }
 
-/* ---- update notifier (banner + modal) ---- */
 
-function renderUpdateBanner() {
-  const banner = $('#update-banner');
-  const s = state.updateStatus;
-  if (!s || !s.available || s.latest === state.updateDismissed) {
-    banner.hidden = true;
-    return;
-  }
-  banner.hidden = false;
-  banner.innerHTML = `
-    <div class="update-banner-body">
-      <span class="update-banner-mark">🌥️</span>
-      <span class="update-banner-text">
-        <strong>SmallSky v${escapeHtml(s.latest)}</strong> is available
-        <span class="muted"> · you have v${escapeHtml(s.current)}</span>
-      </span>
-    </div>
-    <div class="update-banner-actions">
-      <button class="update-banner-btn update-banner-btn--primary" data-update-action="show">See what's new</button>
-      <button class="update-banner-btn" data-update-action="dismiss" aria-label="Dismiss">${ICONS.close}</button>
-    </div>
-  `;
-  banner.querySelector('[data-update-action="show"]').addEventListener('click', openUpdateModal);
-  banner.querySelector('[data-update-action="dismiss"]').addEventListener('click', async () => {
-    await dismissUpdate(s.latest);
-    state.updateDismissed = s.latest;
-    renderUpdateBanner();
-    showToast(`Reminders for v${s.latest} dismissed.`);
-  });
-}
 
-function openUpdateModal() {
-  const s = state.updateStatus;
-  if (!s || !s.available) return;
-  const info = s.info || {};
-  const changes = Array.isArray(info.changes) && info.changes.length ? info.changes : ['(no changelog provided)'];
-  const released = info.released ? new Date(info.released + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' }) : '';
-  const downloadUrl = info.downloadUrl || `https://github.com/Nyrrine/smallsky/archive/refs/heads/main.zip`;
-  const discordUrl = info.discordUrl || 'https://discord.gg/DTvRR5qxxh';
-
-  const modal = $('#update-modal');
-  modal.innerHTML = `
-    <div class="update-modal-card">
-      <button class="update-modal-close" aria-label="Close" data-update-close>${ICONS.close}</button>
-      <h2 class="update-modal-title">SmallSky v${escapeHtml(s.latest)} is out 🌥️</h2>
-      ${released ? `<div class="update-modal-released">Released ${escapeHtml(released)} · you have v${escapeHtml(s.current)}</div>` : ''}
-      <div class="update-modal-section">
-        <h3>What's new</h3>
-        <ul class="update-modal-changes">
-          ${changes.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
-        </ul>
-      </div>
-      <div class="update-modal-section">
-        <h3>How to update (about 1 minute)</h3>
-        <ol class="update-modal-steps">
-          <li>
-            <strong>Download the new version</strong>
-            <a class="update-modal-action" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">↓ Download v${escapeHtml(s.latest)}</a>
-          </li>
-          <li>
-            <strong>Replace your <code>smallsky</code> folder</strong>
-            <p class="muted">Unzip the new download and replace the folder you originally installed from.</p>
-          </li>
-          <li>
-            <strong>Reload SmallSky</strong>
-            <p class="muted">Open <code>chrome://extensions</code>, find SmallSky, click the ↻ reload icon. Then refresh this dashboard.</p>
-          </li>
-        </ol>
-        <p class="muted update-modal-discord">
-          Prefer a picture guide? <a href="${escapeHtml(discordUrl)}" target="_blank" rel="noopener">Join the Discord</a> — the install thread covers updates too.
-        </p>
-      </div>
-      <div class="update-modal-foot">
-        <button class="update-modal-btn" data-update-action="dismiss-modal">Remind me later</button>
-      </div>
-    </div>
-  `;
-  modal.hidden = false;
-  requestAnimationFrame(() => modal.classList.add('visible'));
-
-  modal.querySelector('[data-update-close]').addEventListener('click', closeUpdateModal);
-  modal.querySelector('[data-update-action="dismiss-modal"]').addEventListener('click', async () => {
-    await dismissUpdate(s.latest);
-    state.updateDismissed = s.latest;
-    closeUpdateModal();
-    renderUpdateBanner();
-  });
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) closeUpdateModal();
-  }, { once: true });
-}
-
-function closeUpdateModal() {
-  const modal = $('#update-modal');
-  modal.classList.remove('visible');
-  setTimeout(() => { modal.hidden = true; }, 160);
-}
-
-/* ---- top-bar search (Google-style, persistent) ---- */
-
-const searchState = { query: '', results: [], cursor: 0, debounceTimer: null };
-
-function showResultsPanel() { $('#search-results').classList.add('visible'); }
-function hideResultsPanel() { $('#search-results').classList.remove('visible'); }
-function focusSearch() {
-  const input = $('#search-input');
-  input.focus();
-  input.select();
-}
-
-function runSearch(query) {
-  searchState.query = query;
-  searchState.results = searchAll(query, { courses: state.courses, bundles: state.bundles });
-  searchState.cursor = 0;
-  renderSearchResults();
-}
-
-function renderSearchResults() {
-  const wrap = $('#search-results');
-  const q = (searchState.query || '').trim();
-  if (q.length < 2) {
-    hideResultsPanel();
-    wrap.innerHTML = '';
-    return;
-  }
-  if (!searchState.results.length) {
-    showResultsPanel();
-    wrap.innerHTML = `<div class="search-empty">No matches for <strong>${escapeHtml(q)}</strong>.</div>`;
-    return;
-  }
-  showResultsPanel();
-  wrap.innerHTML = searchState.results.map((r, i) => {
-    const ci = derive.colorIndex(r.courseCode);
-    const kindIcon = {
-      announcement: ICONS.megaphone,
-      assignment:   ICONS.file,
-      quiz:         ICONS.quiz,
-      module:       ICONS.module,
-      course:       ICONS.book || ICONS.module,
-    }[r.kind] || ICONS.bell;
-    return `
-      <a class="search-row${i === searchState.cursor ? ' is-active' : ''}" href="${r.href}" target="_blank" rel="noopener" data-idx="${i}">
-        <span class="search-row-icon chip-c${ci}">${kindIcon}</span>
-        <div class="search-row-body">
-          <div class="search-row-title">${highlight(r.title, searchState.query)}</div>
-          ${r.snippet ? `<div class="search-row-snippet">${r.snippet}</div>` : ''}
-          <div class="search-row-meta">
-            <span class="chip chip-c${ci}">${escapeHtml(r.courseCode)}</span>
-            <span class="search-row-kind">${kindLabel(r.kind)}</span>
-            ${r.when ? `<span class="search-row-when">${escapeHtml(derive.relativeTime(r.when))}</span>` : ''}
-          </div>
-        </div>
-      </a>
-    `;
-  }).join('');
-}
-
-function highlight(text, q) {
-  const t = escapeHtml(text || '');
-  if (!q) return t;
-  const re = new RegExp(`(${q.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')})`, 'ig');
-  return t.replace(re, '<mark>$1</mark>');
-}
-
-function kindLabel(k) {
-  return { announcement: 'Announcement', assignment: 'Assignment', quiz: 'Quiz', module: 'Module / Week', course: 'Course' }[k] || k;
-}
-
-function moveSearchCursor(delta) {
-  if (!searchState.results.length) return;
-  const n = searchState.results.length;
-  searchState.cursor = (searchState.cursor + delta + n) % n;
-  renderSearchResults();
-  // Scroll active row into view
-  const active = $('#search-results .is-active');
-  if (active) active.scrollIntoView({ block: 'nearest' });
-}
-
-function activateSearchResult() {
-  const r = searchState.results[searchState.cursor];
-  if (!r) return;
-  window.open(r.href, '_blank', 'noopener');
-  $('#search-input').blur();
-  hideResultsPanel();
-}
-
-function wireSearch() {
-  const input = $('#search-input');
-
-  input.addEventListener('input', () => {
-    clearTimeout(searchState.debounceTimer);
-    searchState.debounceTimer = setTimeout(() => runSearch(input.value), 80);
-  });
-
-  input.addEventListener('focus', () => {
-    // Re-show results if there's already a query
-    if (input.value.trim().length >= 2) {
-      runSearch(input.value);
-    }
-  });
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown')       { e.preventDefault(); moveSearchCursor(1); }
-    else if (e.key === 'ArrowUp')    { e.preventDefault(); moveSearchCursor(-1); }
-    else if (e.key === 'Enter')      { e.preventDefault(); activateSearchResult(); }
-    else if (e.key === 'Escape')     { e.preventDefault(); input.value = ''; runSearch(''); input.blur(); }
-  });
-
-  // Click outside the search wrap → hide results (but keep query in input)
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.topbar-search-wrap')) return;
-    hideResultsPanel();
-  });
-
-  $('#search-results').addEventListener('mousemove', (e) => {
-    const row = e.target.closest('.search-row');
-    if (!row) return;
-    const idx = +row.dataset.idx;
-    if (idx !== searchState.cursor) { searchState.cursor = idx; renderSearchResults(); }
-  });
-
-  // Global '/' focuses the input (unless typing somewhere else)
-  document.addEventListener('keydown', (e) => {
-    if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      e.preventDefault();
-      focusSearch();
-    }
-  });
-}
 
 /* ---- events ---- */
 
@@ -1819,12 +1644,14 @@ function wireGlobalEvents() {
   wireGlobalBellHandlers();
   wireGlobalProfileHandlers();
   wireGlobalSettingsHandlers();
-  wireScheduleNav();
-  wireSearch();
-  $('#photo-upload').addEventListener('change', (e) => {
-    const file = e.target.files && e.target.files[0];
-    handlePhotoUpload(file);
-  });
+  initDrawer({ state, store });
+  initSchedule({ state, onOpenAnnouncement: openAnnouncementModal });
+  initAnnouncementModal({ state });
+  initUpdateModal({ state });
+  initPhoto({ state, render });
+  initAvatar({ state, render });
+  initClassSchedule({ state, render });
+  initSearch({ state });
   $('[data-action="theme"]').addEventListener('click', toggleTheme);
   $('[data-action="bell"]').addEventListener('click', (e) => { e.preventDefault(); toggleBell(e.currentTarget); });
   $('[data-action="settings"]').addEventListener('click', (e) => { e.preventDefault(); toggleSettings(e.currentTarget); });
@@ -1841,11 +1668,9 @@ function wireGlobalEvents() {
 }
 
 function wireGlobalProfileHandlers() {
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && profileMenuOpen) closeProfileMenu(); });
-  document.addEventListener('click', (e) => {
-    if (!profileMenuOpen) return;
-    if (e.target.closest('#profile-menu')) return;
-    if (e.target.closest('[data-action="profile"]')) return;
-    closeProfileMenu();
+  bindDismissable({
+    isOpen: () => profileMenuOpen,
+    close: closeProfileMenu,
+    ignoreSelectors: ['#profile-menu', '[data-action="profile"]'],
   });
 }

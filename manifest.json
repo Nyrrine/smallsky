@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
   "name": "SmallSky",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Soft, fast student dashboard for BigSky (D2L Brightspace) at De La Salle-CSB.",
-  "permissions": ["storage", "alarms", "unlimitedStorage"],
-  "host_permissions": ["https://bigsky.benilde.edu.ph/*"],
+  "permissions": [
+    "storage",
+    "alarms",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://bigsky.benilde.edu.ph/*"
+  ],
   "action": {
     "default_title": "Open SmallSky"
   },
@@ -14,16 +20,27 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://bigsky.benilde.edu.ph/*"],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://bigsky.benilde.edu.ph/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dashboard.html", "assets/*"],
-      "matches": ["https://bigsky.benilde.edu.ph/*"]
+      "resources": [
+        "dashboard.html",
+        "assets/*"
+      ],
+      "matches": [
+        "https://bigsky.benilde.edu.ph/*"
+      ]
     }
   ],
   "icons": {

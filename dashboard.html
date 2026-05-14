@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>SmallSky</title>
+  <!-- Theme init MUST run before the stylesheet loads, to prevent the
+       white-flash on dark-mode reloads. See theme-init.js. -->
+  <script src="theme-init.js"></script>
   <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
   <link rel="icon" type="image/png" sizes="128x128" href="assets/icon-128.png">
   <link rel="stylesheet" href="dashboard.css">
@@ -95,6 +98,13 @@
   <!-- Update modal (centered, dismissable). -->
   <div id="update-modal" class="update-modal" role="dialog" aria-label="Update available" hidden></div>
 
+  <!-- Announcement detail modal (centered). -->
+  <div id="announcement-modal" class="announcement-modal" role="dialog" aria-label="Announcement" hidden></div>
+
+  <!-- Task detail drawer (slides in from right). -->
+  <div id="task-drawer-backdrop" class="task-drawer-backdrop" hidden></div>
+  <aside id="task-drawer" class="task-drawer" role="dialog" aria-label="Task details" hidden></aside>
+
   <!-- Logged-out screen shown when auth fails on boot. -->
   <div id="logged-out" class="logged-out" hidden>
     <img src="assets/icon-128.png" alt="" class="logged-out-mark">
@@ -106,6 +116,10 @@
 
   <!-- Hidden file input for course photo upload. -->
   <input id="photo-upload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none">
+  <!-- Hidden file input for user avatar upload. -->
+  <input id="avatar-upload" type="file" accept="image/png,image/jpeg,image/webp" style="display:none">
+  <!-- Class schedule editor popover (one global instance, retargeted per course). -->
+  <div id="class-schedule-editor" class="cs-editor" role="dialog" aria-label="Class schedule" hidden></div>
 
   <!-- Toast for upload feedback. -->
   <div id="smallsky-toast" class="toast" hidden></div>
