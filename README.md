@@ -73,11 +73,11 @@ Found a bug, want a feature, or just to say hi? [Join the Discord](https://disco
 
 ### Install (for developers / comfortable users)
 
-1. Click `Code` → `Download ZIP` (or `git clone https://github.com/Nyrrine/smallsky.git`).
-2. Unzip the folder.
-3. Open Chrome and navigate to `chrome://extensions`.
+1. Grab the latest release ZIP from [Releases](https://github.com/Nyrrine/smallsky/releases) — or `git clone https://github.com/Nyrrine/smallsky.git`.
+2. **Fully extract the ZIP.** Right-click → *Extract All* (Windows) or double-click (macOS). You should end up with a normal folder named `smallsky` — *not* the ZIP itself, and not the "preview" view Windows shows when you double-click a ZIP without extracting.
+3. Open Chrome (or Brave, Edge, any Chromium browser) and navigate to `chrome://extensions` (Brave: `brave://extensions`).
 4. Toggle **Developer mode** on (top-right corner).
-5. Click **Load unpacked** and pick the unzipped folder.
+5. Click **Load unpacked** and pick the folder that has `manifest.json` directly inside it — usually the inner `smallsky` folder. If you see another folder inside the one you selected, go one level deeper. *(If you get "manifest is missing or unreadable," you've picked the wrong folder — re-pick the one with `manifest.json` at the top.)*
 6. Pin the SmallSky icon to your toolbar.
 7. Log into BigSky in any tab — then click the icon.
 
